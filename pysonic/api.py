@@ -1,16 +1,16 @@
 import sys
+import logging
 import cherrypy
 from bs4 import BeautifulSoup
 from pysonic.library import LETTER_GROUPS
+
+logging = logging.getLogger("api")
 
 
 class PysonicApi(object):
     def __init__(self, db, library):
         self.db = db
         self.library = library
-
-        print("Libraries:", [i["name"] for i in self.library.get_libraries()])
-        print("Artists:", [i["name"] for i in self.library.get_artists()])
 
     def response(self, status="ok"):
         doc = BeautifulSoup('', features='lxml-xml')
@@ -33,8 +33,8 @@ class PysonicApi(object):
         root.append(doc.new_tag("license",
                                 valid="true",
                                 email="admin@localhost",
-                                licenseExpires="2018-06-22T10:31:49.921Z",
-                                trialExpires="2016-06-29T03:03:58.200Z"))
+                                licenseExpires="2100-01-01T00:00:00.000Z",
+                                trialExpires="2100-01-01T01:01:00.000Z"))
         yield doc.prettify()
 
     @cherrypy.expose
@@ -74,7 +74,7 @@ class PysonicApi(object):
             index.attrs["name"] = letter.upper()
             indexes.append(index)
             for artist in self.library.get_artists():
-                if artist["name"][0].lower() == letter:
+                if artist["name"][0].lower() in letter:
                     artist_tag = doc.new_tag("artist")
                     artist_tag.attrs.update({"id": artist["id"], "name": artist["name"]})
                     index.append(artist_tag)
@@ -149,7 +149,7 @@ class PysonicApi(object):
                     yield data
                     sys.stdout.write('.')
                     sys.stdout.flush()
-            print("\nSent {} bytes for {}".format(total, fpath))
+            logging.info("\nSent {} bytes for {}".format(total, fpath))
         return content()
     stream_view._cp_config = {'response.stream': True}
 
@@ -158,7 +158,11 @@ class PysonicApi(object):
         # /rest/getCoverArt.view?u=dave&s=bfk9mir8is02u3m5as8ucsehn0
         # &t=e2b09fb9233d1bfac9abe3dc73017f1e&v=1.2.0&c=DSub&id=12833
         fpath = self.library.get_filepath(id)
-        cherrypy.response.headers['Content-Type'] = 'image/jpeg'
+        type2ct = {
+            'jpg': 'image/jpeg',
+            'png': 'image/png'
+        }
+        cherrypy.response.headers['Content-Type'] = type2ct[fpath[-3:]]
 
         def content():
             total = 0
@@ -171,7 +175,7 @@ class PysonicApi(object):
                     yield data
                     sys.stdout.write('.')
                     sys.stdout.flush()
-            print("\nSent {} bytes for {}".format(total, fpath))
+            logging.info("\nSent {} bytes for {}".format(total, fpath))
         return content()
 
     getCoverArt_view._cp_config = {'response.stream': True}
@@ -198,8 +202,6 @@ class PysonicApi(object):
                 continue
             tag = doc.new_tag(key)
             tag.append(str(value))
-            # print(dir(tag))
-            # print(value)
             dirtag.append(tag)
         yield doc.prettify()
 

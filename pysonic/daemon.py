@@ -1,7 +1,8 @@
+import os
 import logging
 import cherrypy
 from pysonic.api import PysonicApi
-from pysonic.library import PysonicLibrary
+from pysonic.library import PysonicLibrary, DuplicateRootException
 from pysonic.database import PysonicDatabase
 
 
@@ -21,7 +22,16 @@ def main():
 
     db = PysonicDatabase(path=args.database_path)
     library = PysonicLibrary(db)
+    for dirname in args.dirs:
+        assert os.path.exists(dirname) and dirname.startswith("/"), "--dirs must be absolute paths and exist!"
+        try:
+            library.add_dir(dirname)
+        except DuplicateRootException:
+            pass
     library.update()
+
+    logging.warning("Libraries: {}".format([i["name"] for i in library.get_libraries()]))
+    logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
 
     cherrypy.tree.mount(PysonicApi(db, library), '/rest/', {'/': {}})
     cherrypy.config.update({
@@ -29,6 +39,7 @@ def main():
         'tools.sessions.on': True,
         'tools.sessions.locking': 'explicit',
         'tools.sessions.timeout': 525600,
+        'tools.gzip.on': True,
         'request.show_tracebacks': True,
         'server.socket_port': args.port,
         'server.thread_pool': 25,
@@ -40,7 +51,7 @@ def main():
     })
 
     def signal_handler(signum, stack):
-        print('Got sig {}, exiting...'.format(signum))
+        logging.critical('Got sig {}, exiting...'.format(signum))
         cherrypy.engine.exit()
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -50,7 +61,7 @@ def main():
         cherrypy.engine.start()
         cherrypy.engine.block()
     finally:
-        print("API has shut down")
+        logging.info("API has shut down")
         cherrypy.engine.exit()
 
 if __name__ == '__main__':

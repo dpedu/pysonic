@@ -1,10 +1,14 @@
 import os
 import json
+import logging
 from pysonic.scanner import PysonicFilesystemScanner
 
 
 LETTER_GROUPS = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
-                 "u", "v", "w", "x-z", "#"]
+                 "u", "v", "w", "xyz", "0123456789"]
+
+
+logging = logging.getLogger("library")
 
 
 def memoize(function):
@@ -24,14 +28,27 @@ class NoDataException(Exception):
     pass
 
 
+class DuplicateRootException(Exception):
+    pass
+
+
 class PysonicLibrary(object):
     def __init__(self, database):
         self.db = database
         self.scanner = PysonicFilesystemScanner(self)
-        print("library ready")
+        logging.info("library ready")
 
     def update(self):
         self.scanner.init_scan()
+
+    def add_dir(self, dir_path):
+        dir_path = os.path.abspath(os.path.normpath(dir_path))
+        libraries = [self.db.decode_metadata(i['metadata'])['fspath'] for i in self.db.getnodes(-1)]
+        if dir_path in libraries:
+            raise DuplicateRootException("Dir already in library")
+        else:
+            new_root = self.db._addnode(-1, 'New Library', is_dir=True)
+            self.db.update_metadata(new_root['id'], fspath=dir_path)
 
     @memoize
     def get_libraries(self):

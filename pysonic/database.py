@@ -1,8 +1,12 @@
 import os
 import json
 import sqlite3
+import logging
 from itertools import chain
 from contextlib import closing
+
+
+logging = logging.getLogger("database")
 
 
 def dict_factory(cursor, row):
@@ -36,26 +40,25 @@ class PysonicDatabase(object):
                         'parent' INTEGER NOT NULL,
                         'isdir' BOOLEAN NOT NULL,
                         'name' TEXT NOT NULL,
+                        'type' TEXT,
                         'title' TEXT,
                         'album' TEXT,
                         'artist' TEXT,
                         'metadata' TEXT
-                        )""",
-                   """INSERT INTO nodes (parent, isdir, name, metadata)
-                        VALUES (-1, 1, 'Main Library', '{"fspath": "/home/dave/Code/pysonic/music/"}');"""]
+                        )"""]
 
         with closing(self.db.cursor()) as cursor:
             cursor.execute("SELECT * FROM sqlite_master WHERE type='table' AND name='meta';")
 
             # Initialize DB
             if len(cursor.fetchall()) == 0:
-                print("Initializing database")
+                logging.waring("Initializing database")
                 for query in queries:
                     cursor.execute(query)
             else:
                 # Migrate if old db exists
                 version = int(cursor.execute("SELECT * FROM meta WHERE key='db_version';").fetchone()['value'])
-                print("db schema is version {}".format(version))
+                logging.warning("db schema is version {}".format(version))
 
     # Virtual file tree
     def getnode(self, node_id):
@@ -67,13 +70,15 @@ class PysonicDatabase(object):
             return list(chain(*[cursor.execute("SELECT * FROM nodes WHERE parent=?;", (parent_id, )).fetchall()
                               for parent_id in parent_ids]))
 
-    def addnode(self, parent, fspath, name):
+    def addnode(self, parent_id, fspath, name):
         fullpath = os.path.join(fspath, name)
-        print("Adding ", fullpath)
         is_dir = os.path.isdir(fullpath)
+        return self._addnode(parent_id, name, is_dir)
+
+    def _addnode(self, parent_id, name, is_dir=True):
         with closing(self.db.cursor()) as cursor:
             cursor.execute("INSERT INTO nodes (parent, isdir, name) VALUES (?, ?, ?);",
-                           (parent["id"], 1 if is_dir else 0, name))
+                           (parent_id, 1 if is_dir else 0, name))
             return self.getnode(cursor.lastrowid)
 
     def delnode(self, node_id):
@@ -86,7 +91,7 @@ class PysonicDatabase(object):
 
     def update_metadata(self, node_id, mergedict=None, **kwargs):
         mergedict = mergedict if mergedict else {}
-        keys_in_table = ["title", "album", "artist"]
+        keys_in_table = ["title", "album", "artist", "type"]
         mergedict.update(kwargs)
         with closing(self.db.cursor()) as cursor:
             for table_key in keys_in_table:
