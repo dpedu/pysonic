@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 import mimetypes
@@ -10,6 +11,7 @@ from mutagen.id3._util import ID3NoHeaderError
 
 
 logging = logging.getLogger("scanner")
+RE_NUMBERS = re.compile(r'^([0-9]+)')
 
 
 class PysonicFilesystemScanner(object):
@@ -116,8 +118,8 @@ class PysonicFilesystemScanner(object):
                             id3 = ID3(fpath)
                             # print(id3.pprint())
                             try:
-                                tags["track"] = int(''.join(id3['TRCK'].text).split("/")[0])
-                            except KeyError:
+                                tags["track"] = int(RE_NUMBERS.findall(''.join(id3['TRCK'].text))[0])
+                            except (KeyError, IndexError):
                                 pass
                             try:
                                 tags["id3_artist"] = ''.join(id3['TPE1'].text)
