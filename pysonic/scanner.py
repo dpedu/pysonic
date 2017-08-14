@@ -7,6 +7,7 @@ from time import time
 from threading import Thread
 from pysonic.types import KNOWN_MIMES, MUSIC_TYPES
 from mutagen.id3 import ID3
+from mutagen import MutagenError
 from mutagen.id3._util import ID3NoHeaderError
 
 
@@ -139,6 +140,8 @@ class PysonicFilesystemScanner(object):
                                 pass
                         except ID3NoHeaderError:
                             pass
+                        except MutagenError as m:
+                            logging.error(m)
                         self.library.db.update_metadata(track_file["id"], **tags)
 
             logging.warning("Library scan complete in {}s".format(int(time() - start)))
