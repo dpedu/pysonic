@@ -186,8 +186,8 @@ class PysonicApi(object):
                                 type="music")
             if "." in item["name"]:
                 child.attrs["suffix"] = item["name"].split(".")[-1]
-            if "type" in item_meta:
-                child.attrs["contentType"] = item_meta["type"]
+            if item["type"]:
+                child.attrs["contentType"] = item["type"]
             if 'cover' in item_meta:
                 child.attrs["coverArt"] = item_meta["cover"]
             elif 'cover' in dir_meta:
