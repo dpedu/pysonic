@@ -4,7 +4,9 @@ import logging
 import mimetypes
 from time import time
 from threading import Thread
-from pysonic.types import KNOWN_MIMES
+from pysonic.types import KNOWN_MIMES, MUSIC_TYPES
+from mutagen.id3 import ID3
+from mutagen.id3._util import ID3NoHeaderError
 
 
 logging = logging.getLogger("scanner")
@@ -93,5 +95,48 @@ class PysonicFilesystemScanner(object):
                             else:
                                 logging.warning("Ignoring unreadable file at {}, unknown ftype ({}, {})"
                                                 .format(fpath, ftype, extra))
+            #
+            #
+            #
+            # Add advanced id3 metadata
+            for artist_dir in self.library.db.getnodes(parent["id"]):
+                artist = artist_dir["name"]
+                for album_dir in self.library.db.getnodes(artist_dir["id"]):
+                    album = album_dir["name"]
+                    album_meta = self.library.db.get_metadata(album_dir["id"])
+                    for track_file in self.library.db.getnodes(album_dir["id"]):
+                        track_meta = self.library.db.decode_metadata(track_file['metadata'])
+                        title = track_file["name"]
+                        fpath = self.library.get_filepath(track_file["id"])
+                        if track_meta.get('id3_done', False) or track_file.get("type", "x") not in MUSIC_TYPES:
+                            continue
+                        print("Mutagening", fpath)
+                        tags = {'id3_done': True}
+                        try:
+                            id3 = ID3(fpath)
+                            # print(id3.pprint())
+                            try:
+                                tags["track"] = int(''.join(id3['TRCK'].text).split("/")[0])
+                            except KeyError:
+                                pass
+                            try:
+                                tags["id3_artist"] = ''.join(id3['TPE1'].text)
+                            except KeyError:
+                                pass
+                            try:
+                                tags["id3_album"] = ''.join(id3['TALB'].text)
+                            except KeyError:
+                                pass
+                            try:
+                                tags["id3_title"] = ''.join(id3['TIT2'].text)
+                            except KeyError:
+                                pass
+                            try:
+                                tags["id3_year"] = id3['TDRC'].text[0].year
+                            except (KeyError, IndexError):
+                                pass
+                        except ID3NoHeaderError:
+                            pass
+                        self.library.db.update_metadata(track_file["id"], **tags)
 
             logging.warning("Library scan complete in {}s".format(int(time() - start)))

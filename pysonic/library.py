@@ -69,6 +69,10 @@ class PysonicLibrary(object):
         return self.db.getnodes(dirid)
 
     @memoize
+    def get_albums(self):
+        return self.db.getnodes(*[item["id"] for item in self.get_artists()])
+
+    @memoize
     def get_filepath(self, nodeid):
         parents = [self.db.getnode(nodeid)]
         while parents[-1]['parent'] != -1:

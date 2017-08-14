@@ -37,6 +37,7 @@ def main():
 
     logging.warning("Libraries: {}".format([i["name"] for i in library.get_libraries()]))
     logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
+    logging.warning("Albums: {}".format(len(library.get_albums())))
 
     cherrypy.tree.mount(PysonicApi(db, library, args), '/rest/', {'/': {}})
     cherrypy.config.update({

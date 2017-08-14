@@ -3,6 +3,7 @@ import logging
 import cherrypy
 import subprocess
 from time import time
+from random import shuffle
 from bs4 import BeautifulSoup
 from pysonic.library import LETTER_GROUPS
 from pysonic.types import MUSIC_TYPES
@@ -86,6 +87,58 @@ class PysonicApi(object):
         yield doc.prettify()
 
     @cherrypy.expose
+    def savePlayQueue_view(self, id, current, position, **kwargs):
+        # /rest/savePlayQueue.view?
+        # u=dave&
+        # s=h7vcg97gm2vbb7m4133pavs1ot&
+        # t=355f45124d9d3a75fe681c11d94ed066&
+        # v=1.2.0&
+        # c=DSub&
+        # id=296&
+        # id=289&
+        # id=292&id=287&id=288&id=290&id=293&id=294&id=297&id=298&id=291&
+        # current=297&
+        # position=0
+        print("TODO save playlist with items {} current {} position {}".format(id, current, position))
+
+    @cherrypy.expose
+    def getAlbumList_view(self, type, size=50, offset=0, **kwargs):
+        albums = self.library.get_albums()
+        if type == "random":
+            shuffle(albums)
+        elif type == "alphabeticalByName":
+            albums.sort(key=lambda item: item.get("id3_album", item["album"]))
+        else:
+            raise NotImplemented()
+        albumset = albums[0 + int(offset):int(size) + int(offset)]
+
+        cherrypy.response.headers['Content-Type'] = 'text/xml; charset=utf-8'
+        doc, root = self.response()
+        albumlist = doc.new_tag("albumList")
+        doc.append(albumlist)
+
+        for album in albumset:
+            album_meta = self.library.db.decode_metadata(album['metadata'])
+            tag = doc.new_tag("album",
+                              id=album["id"],
+                              parent=album["parent"],
+                              isDir="true" if album['isdir'] else "false",
+                              title=album_meta.get("id3_title", album["name"]),
+                              album=album_meta.get("id3_album", album["album"]),
+                              artist=album_meta.get("id3_artist", album["artist"]),
+                              # X year="2014"
+                              # X coverArt="3228"
+                              # playCount="0"
+                              # created="2016-05-08T05:31:31.000Z"/>
+                              )
+            if 'cover' in album_meta:
+                tag.attrs["coverArt"] = album_meta["cover"]
+            if 'id3_year' in album_meta:
+                tag.attrs["year"] = album_meta['id3_year']
+            albumlist.append(tag)
+        yield doc.prettify()
+
+    @cherrypy.expose
     def getMusicDirectory_view(self, id, **kwargs):
         """
         List an artist dir
@@ -108,34 +161,41 @@ class PysonicApi(object):
             # omit not dirs and media in browser
             if not item["isdir"] and item["type"] not in MUSIC_TYPES:
                 continue
+            item_meta = self.db.decode_metadata(item['metadata'])
             child = doc.new_tag("child",
                                 id=item["id"],
                                 parent=directory["id"],
                                 isDir="true" if item['isdir'] else "false",
-                                title=item["name"],
-                                album=item["name"],
-                                artist=directory["name"],
+                                title=item_meta.get("id3_title", item["name"]),
+                                album=item_meta.get("id3_album", item["album"]),
+                                artist=item_meta.get("id3_artist", item["artist"]),
                                 # playCount="5",
                                 # created="2016-04-25T07:31:33.000Z"
-                                # track="3",
-                                # year="2012",
+                                # X track="3",
+                                # X year="2012",
+                                # X coverArt="12835",
+                                # X contentType="audio/mpeg"
+                                # X suffix="mp3"
                                 # genre="Other",
-                                # coverArt="12835",
-                                # contentType="audio/mpeg"
-                                # suffix="mp3"
                                 # size="15838864"
                                 # duration="395"
                                 # bitRate="320"
                                 # path="Cosmic Gate/Sign Of The Times/03 Flatline (featuring Kyler England).mp3"
-                                # albumId="933"
-                                # artistId="353"
-                                # type="music"/>
-                                )
-            item_meta = self.db.decode_metadata(item['metadata'])
+                                albumId=directory["id"],
+                                artistId=directory["parent"],
+                                type="music")
+            if "." in item["name"]:
+                child.attrs["suffix"] = item["name"].split(".")[-1]
+            if item_meta["type"]:
+                child.attrs["contentType"] = item_meta["type"]
             if 'cover' in item_meta:
                 child.attrs["coverArt"] = item_meta["cover"]
             elif 'cover' in dir_meta:
                 child.attrs["coverArt"] = dir_meta["cover"]
+            if 'track' in item_meta:
+                child.attrs["track"] = item_meta['track']
+            if 'id3_year' in item_meta:
+                child.attrs["year"] = item_meta['id3_year']
             dirtag.append(child)
         yield doc.prettify()
 
