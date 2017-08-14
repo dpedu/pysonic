@@ -69,13 +69,16 @@ class PysonicLibrary(object):
         return self.db.getnodes(dirid)
 
     @memoize
-    def get_filepath(self, fileid):
-        parents = [self.db.getnode(fileid)]
+    def get_filepath(self, nodeid):
+        parents = [self.db.getnode(nodeid)]
         while parents[-1]['parent'] != -1:
             parents.append(self.db.getnode(parents[-1]['parent']))
         root = parents.pop()
         parents.reverse()
         return os.path.join(json.loads(root['metadata'])['fspath'], *[i['name'] for i in parents])
+
+    def get_file_metadata(self, nodeid):
+        return self.db.get_metadata(nodeid)
 
     def get_artist_info(self, item_id):
         # artist = self.db.getnode(item_id)

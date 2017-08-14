@@ -16,6 +16,11 @@ def main():
     parser.add_argument('-d', '--dirs', required=True, nargs='+', help="new music dirs to share")
     parser.add_argument('-s', '--database-path', default="./db.sqlite", help="path to persistent sqlite database")
     parser.add_argument('--debug', action="store_true", help="enable development options")
+
+    group = parser.add_argument_group("app options")
+    group.add_argument("--skip-transcode", action="store_true", help="instead of trancoding mp3s, send as-is")
+    group.add_argument("--max-bitrate", type=int, default=320, help="maximum send bitrate")
+
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO if args.debug else logging.WARNING)
@@ -33,7 +38,7 @@ def main():
     logging.warning("Libraries: {}".format([i["name"] for i in library.get_libraries()]))
     logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
 
-    cherrypy.tree.mount(PysonicApi(db, library), '/rest/', {'/': {}})
+    cherrypy.tree.mount(PysonicApi(db, library, args), '/rest/', {'/': {}})
     cherrypy.config.update({
         'sessionFilter.on': True,
         'tools.sessions.on': True,

@@ -52,7 +52,7 @@ class PysonicDatabase(object):
 
             # Initialize DB
             if len(cursor.fetchall()) == 0:
-                logging.waring("Initializing database")
+                logging.warning("Initializing database")
                 for query in queries:
                     cursor.execute(query)
             else:
@@ -105,7 +105,11 @@ class PysonicDatabase(object):
                 cursor.execute("UPDATE nodes SET metadata=? WHERE id=?;", (json.dumps(metadata), node_id, ))
 
     def get_metadata(self, node_id):
-        return self.decode_metadata(self.getnode(node_id)["metadata"])
+        keys_in_table = ["title", "album", "artist", "type"]
+        node = self.getnode(node_id)
+        metadata = self.decode_metadata(node["metadata"])
+        metadata.update({item: node[item] for item in ["title", "album", "artist", "type"]})
+        return metadata
 
     def decode_metadata(self, metadata):
         if metadata:

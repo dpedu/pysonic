@@ -1,16 +1,21 @@
 import sys
 import logging
 import cherrypy
+import subprocess
+from time import time
 from bs4 import BeautifulSoup
 from pysonic.library import LETTER_GROUPS
+from pysonic.types import MUSIC_TYPES
+
 
 logging = logging.getLogger("api")
 
 
 class PysonicApi(object):
-    def __init__(self, db, library):
+    def __init__(self, db, library, options):
         self.db = db
         self.library = library
+        self.options = options
 
     def response(self, status="ok"):
         doc = BeautifulSoup('', features='lxml-xml')
@@ -100,6 +105,9 @@ class PysonicApi(object):
         root.append(dirtag)
 
         for item in children:
+            # omit not dirs and media in browser
+            if not item["isdir"] and item["type"] not in MUSIC_TYPES:
+                continue
             child = doc.new_tag("child",
                                 id=item["id"],
                                 parent=directory["id"],
@@ -132,24 +140,34 @@ class PysonicApi(object):
         yield doc.prettify()
 
     @cherrypy.expose
-    def stream_view(self, id, **kwargs):
-        # /rest/stream.view?u=dave&s=rid5h452ag6nmb153r8sjtctk8
-        # &t=dad1e6f7331160ea7f04120c7fbab1c8&v=1.2.0&c=DSub&id=167&maxBitRate=256
+    def stream_view(self, id, maxBitRate="256", **kwargs):
+        maxBitRate = int(maxBitRate)
+        assert maxBitRate >= 32 and maxBitRate <= 320
         fpath = self.library.get_filepath(id)
+        meta = self.library.get_file_metadata(id)
         cherrypy.response.headers['Content-Type'] = 'audio/mpeg'
-
-        def content():
-            total = 0
-            with open(fpath, "rb") as f:
+        if self.options.skip_transcode and meta["type"] == "audio/mpeg":
+            def content():
+                with open(fpath, "rb") as f:
+                    while True:
+                        data = f.read(16 * 1024)
+                        if not data:
+                            break
+                        yield data
+        else:
+            def content():
+                transcode_args = ["ffmpeg", "-i", fpath, "-map", "0:0", "-b:a",
+                                  "{}k".format(min(maxBitRate, self.options.max_bitrate)),
+                                  "-v", "0", "-f", "mp3", "-"]
+                logging.info(' '.join(transcode_args))
+                start = time()
+                proc = subprocess.Popen(transcode_args, stdout=subprocess.PIPE)
                 while True:
-                    data = f.read(8192)
+                    data = proc.stdout.read(16 * 1024)
                     if not data:
                         break
-                    total += len(data)
                     yield data
-                    sys.stdout.write('.')
-                    sys.stdout.flush()
-            logging.info("\nSent {} bytes for {}".format(total, fpath))
+                logging.warning("transcoded {} in {}s".format(id, int(time() - start)))
         return content()
     stream_view._cp_config = {'response.stream': True}
 
@@ -173,8 +191,6 @@ class PysonicApi(object):
                         break
                     total += len(data)
                     yield data
-                    sys.stdout.write('.')
-                    sys.stdout.flush()
             logging.info("\nSent {} bytes for {}".format(total, fpath))
         return content()
 

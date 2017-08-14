@@ -4,9 +4,9 @@ import logging
 import mimetypes
 from time import time
 from threading import Thread
+from pysonic.types import KNOWN_MIMES
 
 
-KNOWN_MIMES = ["audio/mpeg", "audio/flac", "audio/x-wav", "image/jpeg", "image/png"]
 logging = logging.getLogger("scanner")
 
 
@@ -38,7 +38,7 @@ class PysonicFilesystemScanner(object):
                 # Create any nodes not found in the db
                 for create in to_create:
                     new_node = self.library.db.addnode(parent["id"], path, create)
-                    logging.info("Added", os.path.join(path, create))
+                    logging.info("Added {}".format(os.path.join(path, create)))
                     db_entires.append(new_node)
 
                 # Delete any db nodes not found on disk
