@@ -107,7 +107,7 @@ class PysonicApi(object):
         if type == "random":
             shuffle(albums)
         elif type == "alphabeticalByName":
-            albums.sort(key=lambda item: item.get("id3_album", item["album"]))
+            albums.sort(key=lambda item: item.get("id3_album", item["album"] if item["album"] else "zzzzzUnsortable"))
         else:
             raise NotImplemented()
         albumset = albums[0 + int(offset):int(size) + int(offset)]
