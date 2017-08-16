@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import logging
 import mimetypes
 from time import time
@@ -28,7 +27,7 @@ class PysonicFilesystemScanner(object):
         logging.warning("Beginning library rescan")
         start = time()
         for parent in self.library.get_libraries():
-            meta = json.loads(parent["metadata"])
+            meta = parent["metadata"]
             logging.info("Scanning {}".format(meta["fspath"]))
 
             def recurse_dir(path, parent):
@@ -70,7 +69,7 @@ class PysonicFilesystemScanner(object):
                 artist = artist_dir["name"]
                 for album_dir in self.library.db.getnodes(artist_dir["id"]):
                     album = album_dir["name"]
-                    album_meta = self.library.db.get_metadata(album_dir["id"])
+                    album_meta = album_dir["metadata"]
                     for track_file in self.library.db.getnodes(album_dir["id"]):
                         title = track_file["name"]
                         if not track_file["title"]:
@@ -106,9 +105,9 @@ class PysonicFilesystemScanner(object):
                 artist = artist_dir["name"]
                 for album_dir in self.library.db.getnodes(artist_dir["id"]):
                     album = album_dir["name"]
-                    album_meta = self.library.db.get_metadata(album_dir["id"])
+                    album_meta = album_dir["metadata"]
                     for track_file in self.library.db.getnodes(album_dir["id"]):
-                        track_meta = self.library.db.decode_metadata(track_file['metadata'])
+                        track_meta = track_file['metadata']
                         title = track_file["name"]
                         fpath = self.library.get_filepath(track_file["id"])
                         if track_meta.get('id3_done', False) or track_file.get("type", "x") not in MUSIC_TYPES:

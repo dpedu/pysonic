@@ -1,7 +1,7 @@
 import os
-import json
 import logging
 from pysonic.scanner import PysonicFilesystemScanner
+from pysonic.types import MUSIC_TYPES
 
 
 LETTER_GROUPS = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
@@ -43,21 +43,21 @@ class PysonicLibrary(object):
 
     def add_dir(self, dir_path):
         dir_path = os.path.abspath(os.path.normpath(dir_path))
-        libraries = [self.db.decode_metadata(i['metadata'])['fspath'] for i in self.db.getnodes(-1)]
+        libraries = [i['metadata']['fspath'] for i in self.db.getnodes(-1)]
         if dir_path in libraries:
             raise DuplicateRootException("Dir already in library")
         else:
             new_root = self.db._addnode(-1, 'New Library', is_dir=True)
             self.db.update_metadata(new_root['id'], fspath=dir_path)
 
-    @memoize
+    #@memoize
     def get_libraries(self):
         """
         Libraries are top-level nodes
         """
         return self.db.getnodes(-1)
 
-    @memoize
+    #@memoize
     def get_artists(self):
         # Assume artists are second level dirs
         return self.db.getnodes(*[item["id"] for item in self.get_libraries()])
@@ -68,18 +68,18 @@ class PysonicLibrary(object):
     def get_dir_children(self, dirid):
         return self.db.getnodes(dirid)
 
-    @memoize
+    #@memoize
     def get_albums(self):
         return self.db.getnodes(*[item["id"] for item in self.get_artists()])
 
-    @memoize
+    #@memoize
     def get_filepath(self, nodeid):
         parents = [self.db.getnode(nodeid)]
         while parents[-1]['parent'] != -1:
             parents.append(self.db.getnode(parents[-1]['parent']))
         root = parents.pop()
         parents.reverse()
-        return os.path.join(json.loads(root['metadata'])['fspath'], *[i['name'] for i in parents])
+        return os.path.join(root['metadata']['fspath'], *[i['name'] for i in parents])
 
     def get_file_metadata(self, nodeid):
         return self.db.get_metadata(nodeid)
@@ -105,3 +105,6 @@ class PysonicLibrary(object):
 
     def get_starred(self, username):
         return self.db.get_starred_items(self.db.get_user(username)["id"])
+
+    def get_songs(self, limit=50, shuffle=True):
+        return self.db.getnodes(types=MUSIC_TYPES, limit=limit, order="rand")

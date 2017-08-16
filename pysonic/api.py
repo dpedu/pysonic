@@ -118,12 +118,12 @@ class PysonicApi(object):
         doc.append(albumlist)
 
         for album in albumset:
-            album_meta = self.library.db.decode_metadata(album['metadata'])
+            album_meta = album['metadata']
             tag = doc.new_tag("album",
                               id=album["id"],
                               parent=album["parent"],
                               isDir="true" if album['isdir'] else "false",
-                              title=album_meta.get("id3_title", album["name"]),
+                              title=album_meta.get("id3_title", album["name"]),  #TODO these cant be blank or dsub gets mad
                               album=album_meta.get("id3_album", album["album"]),
                               artist=album_meta.get("id3_artist", album["artist"]),
                               # X year="2014"
@@ -151,7 +151,7 @@ class PysonicApi(object):
         dirtag = doc.new_tag("directory")
 
         directory = self.library.get_dir(dir_id)
-        dir_meta = self.db.decode_metadata(directory["metadata"])
+        dir_meta = directory["metadata"]
         children = self.library.get_dir_children(dir_id)
         dirtag.attrs.update(name=directory['name'], id=directory['id'],
                             parent=directory['parent'], playCount=10)
@@ -161,7 +161,7 @@ class PysonicApi(object):
             # omit not dirs and media in browser
             if not item["isdir"] and item["type"] not in MUSIC_TYPES:
                 continue
-            item_meta = self.db.decode_metadata(item['metadata'])
+            item_meta = item['metadata']
             dirtag.append(self.render_node(doc, item, item_meta, directory, dir_meta))
         yield doc.prettify()
 
@@ -327,23 +327,34 @@ class PysonicApi(object):
 
     @cherrypy.expose
     def getStarred_view(self, **kwargs):
-        children = self.library.get_starred(cherrypy.request.login)
-
         cherrypy.response.headers['Content-Type'] = 'text/xml; charset=utf-8'
         doc, root = self.response()
-
         tag = doc.new_tag("starred")
-
-        #directory = self.library.get_dir(dir_id)
-        #dir_meta = self.db.decode_metadata(directory["metadata"])
-        #children = self.library.get_dir_children(dir_id)
         root.append(tag)
 
+        children = self.library.get_starred(cherrypy.request.login)
         for item in children:
             # omit not dirs and media in browser
             if not item["isdir"] and item["type"] not in MUSIC_TYPES:
                 continue
-            item_meta = self.db.decode_metadata(item['metadata'])
+            item_meta = item['metadata']
+            itemtype = "song" if item["type"] in MUSIC_TYPES else "album"
+            tag.append(self.render_node(doc, item, item_meta, {}, {}, tagname=itemtype))
+        yield doc.prettify()
+
+    @cherrypy.expose
+    def getRandomSongs_view(self, size=50, genre=None, fromYear=0, toYear=0, **kwargs):
+        cherrypy.response.headers['Content-Type'] = 'text/xml; charset=utf-8'
+        doc, root = self.response()
+        tag = doc.new_tag("randomSongs")
+        root.append(tag)
+
+        children = self.library.get_songs(size, shuffle=True)
+        for item in children:
+            # omit not dirs and media in browser
+            if not item["isdir"] and item["type"] not in MUSIC_TYPES:
+                continue
+            item_meta = item['metadata']
             itemtype = "song" if item["type"] in MUSIC_TYPES else "album"
             tag.append(self.render_node(doc, item, item_meta, {}, {}, tagname=itemtype))
         yield doc.prettify()

@@ -87,13 +87,56 @@ class PysonicDatabase(object):
 
     # Virtual file tree
     def getnode(self, node_id):
-        with closing(self.db.cursor()) as cursor:
-            return cursor.execute("SELECT * FROM nodes WHERE id=?;", (node_id, )).fetchone()
+        return self.getnodes(node_id=node_id)[0]
 
-    def getnodes(self, *parent_ids):
+    def _populate_meta(self, node):
+        node['metadata'] = self.decode_metadata(node['metadata'])
+        return node
+
+    def getnodes(self, *parent_ids, node_id=None, types=None, limit=None, order=None):
+        """
+        Find nodes that match the passed paramters.
+        :param parent_ids: one or more parents to find children of
+        :type parent_ids: int
+        :param node_id: single node id to return
+        :type node_id: int
+        :param types: filter by type column
+        :type types: list
+        :param limit: number of records to limit to
+        :param order: one of ("rand") to select ordering mode
+        """
+        query = "SELECT * FROM nodes WHERE "
+        qargs = []
+
+        def add_filter(name, values):
+            nonlocal query
+            nonlocal qargs
+            query += "{} in (".format(name)
+            for value in (values if type(values) in [list, tuple] else [values]):
+                query += "?, "
+                qargs += [value]
+            query = query.rstrip(", ")
+            query += ") AND"
+
+        if node_id:
+            add_filter("id", node_id)
+        if parent_ids:
+            add_filter("parent", parent_ids)
+        if types:
+            add_filter("type", types)
+
+        query = query.rstrip(" AND")
+
+        if order:
+            query += "ORDER BY "
+            if order == "rand":
+                query += "RANDOM()"
+
+        if limit:  # TODO 2-item tuple limit
+            query += " limit {}".format(limit)
+
         with closing(self.db.cursor()) as cursor:
-            return list(chain(*[cursor.execute("SELECT * FROM nodes WHERE parent=?;", (parent_id, )).fetchall()
-                              for parent_id in parent_ids]))
+            return list(map(self._populate_meta, cursor.execute(query, qargs).fetchall()))
 
     def addnode(self, parent_id, fspath, name):
         fullpath = os.path.join(fspath, name)
@@ -132,9 +175,9 @@ class PysonicDatabase(object):
     def get_metadata(self, node_id):
         keys_in_table = ["title", "album", "artist", "type"]
         node = self.getnode(node_id)
-        metadata = self.decode_metadata(node["metadata"])
-        metadata.update({item: node[item] for item in ["title", "album", "artist", "type"]})
-        return metadata
+        meta = node["metadata"]
+        meta.update({item: node[item] for item in keys_in_table})
+        return meta
 
     def decode_metadata(self, metadata):
         if metadata:
@@ -169,7 +212,10 @@ class PysonicDatabase(object):
                 query = "INSERT INTO stars (userid, nodeid) VALUES (?, ?);"
             else:
                 query = "DELETE FROM stars WHERE userid=? and nodeid=?;"
-            cursor.execute(query, (user_id, node_id))
+            try:
+                cursor.execute(query, (user_id, node_id))
+            except sqlite3.IntegrityError:
+                pass
 
     def get_starred_items(self, for_user_id=None):
         with closing(self.db.cursor()) as cursor:
@@ -178,6 +224,5 @@ class PysonicDatabase(object):
             if for_user_id:
                 q += """ AND userid=?"""
                 qargs += [int(for_user_id)]
-            print(q)
-            print(qargs)
-            return cursor.execute(q, qargs).fetchall()
+            return list(map(self._populate_meta,
+                            cursor.execute(q, qargs).fetchall()))
