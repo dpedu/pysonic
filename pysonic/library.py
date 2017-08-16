@@ -97,6 +97,11 @@ class PysonicLibrary(object):
     def set_starred(self, username, node_id, starred):
         self.db.set_starred(self.db.get_user(username)["id"], node_id, starred)
 
+    def get_stars(self, user, user_id):
+        self.db.get_stars()
+
     def get_user(self, user):
-        if type(user) is int:
-            return self.db.get_user(username)
+        return self.db.get_user(user)
+
+    def get_starred(self, username):
+        return self.db.get_starred_items(self.db.get_user(username)["id"])

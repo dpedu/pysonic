@@ -162,42 +162,47 @@ class PysonicApi(object):
             if not item["isdir"] and item["type"] not in MUSIC_TYPES:
                 continue
             item_meta = self.db.decode_metadata(item['metadata'])
-            child = doc.new_tag("child",
-                                id=item["id"],
-                                parent=directory["id"],
-                                isDir="true" if item['isdir'] else "false",
-                                title=item_meta.get("id3_title", item["name"]),
-                                album=item_meta.get("id3_album", item["album"]),
-                                artist=item_meta.get("id3_artist", item["artist"]),
-                                # playCount="5",
-                                # created="2016-04-25T07:31:33.000Z"
-                                # X track="3",
-                                # X year="2012",
-                                # X coverArt="12835",
-                                # X contentType="audio/mpeg"
-                                # X suffix="mp3"
-                                # genre="Other",
-                                # size="15838864"
-                                # duration="395"
-                                # bitRate="320"
-                                # path="Cosmic Gate/Sign Of The Times/03 Flatline (featuring Kyler England).mp3"
-                                albumId=directory["id"],
-                                artistId=directory["parent"],
-                                type="music")
-            if "." in item["name"]:
-                child.attrs["suffix"] = item["name"].split(".")[-1]
-            if item["type"]:
-                child.attrs["contentType"] = item["type"]
-            if 'cover' in item_meta:
-                child.attrs["coverArt"] = item_meta["cover"]
-            elif 'cover' in dir_meta:
-                child.attrs["coverArt"] = dir_meta["cover"]
-            if 'track' in item_meta:
-                child.attrs["track"] = item_meta['track']
-            if 'id3_year' in item_meta:
-                child.attrs["year"] = item_meta['id3_year']
-            dirtag.append(child)
+            dirtag.append(self.render_node(doc, item, item_meta, directory, dir_meta))
         yield doc.prettify()
+
+    def render_node(self, doc, item, item_meta, directory, dir_meta, tagname="child"):
+        child = doc.new_tag(tagname,
+                            id=item["id"],
+                            parent=item["id"],
+                            isDir="true" if item['isdir'] else "false",
+                            title=item_meta.get("id3_title", item["name"]),
+                            album=item_meta.get("id3_album", item["album"]),
+                            artist=item_meta.get("id3_artist", item["artist"]),
+                            # playCount="5",
+                            # created="2016-04-25T07:31:33.000Z"
+                            # X track="3",
+                            # X year="2012",
+                            # X coverArt="12835",
+                            # X contentType="audio/mpeg"
+                            # X suffix="mp3"
+                            # genre="Other",
+                            # size="15838864"
+                            # duration="395"
+                            # bitRate="320"
+                            # path="Cosmic Gate/Sign Of The Times/03 Flatline (featuring Kyler England).mp3"
+                            type="music")
+        if "albumId" in directory:
+            child.attrs["albumId"] = directory["id"]
+        if "artistId" in directory:
+            child.attrs["artistId"] = directory["parent"]
+        if "." in item["name"]:
+            child.attrs["suffix"] = item["name"].split(".")[-1]
+        if item["type"]:
+            child.attrs["contentType"] = item["type"]
+        if 'cover' in item_meta:
+            child.attrs["coverArt"] = item_meta["cover"]
+        elif 'cover' in dir_meta:
+            child.attrs["coverArt"] = dir_meta["cover"]
+        if 'track' in item_meta:
+            child.attrs["track"] = item_meta['track']
+        if 'id3_year' in item_meta:
+            child.attrs["year"] = item_meta['id3_year']
+        return child
 
     @cherrypy.expose
     def stream_view(self, id, maxBitRate="256", **kwargs):
@@ -313,10 +318,32 @@ class PysonicApi(object):
     @cherrypy.expose
     def star_view(self, id, **kwargs):
         self.library.set_starred(cherrypy.request.login, int(id), starred=True)
-        print(cherrypy.request.login)
         yield self.response()[0].prettify()
 
     @cherrypy.expose
     def unstar_view(self, id, **kwargs):
         self.library.set_starred(cherrypy.request.login, int(id), starred=False)
         yield self.response()[0].prettify()
+
+    @cherrypy.expose
+    def getStarred_view(self, **kwargs):
+        children = self.library.get_starred(cherrypy.request.login)
+
+        cherrypy.response.headers['Content-Type'] = 'text/xml; charset=utf-8'
+        doc, root = self.response()
+
+        tag = doc.new_tag("starred")
+
+        #directory = self.library.get_dir(dir_id)
+        #dir_meta = self.db.decode_metadata(directory["metadata"])
+        #children = self.library.get_dir_children(dir_id)
+        root.append(tag)
+
+        for item in children:
+            # omit not dirs and media in browser
+            if not item["isdir"] and item["type"] not in MUSIC_TYPES:
+                continue
+            item_meta = self.db.decode_metadata(item['metadata'])
+            itemtype = "song" if item["type"] in MUSIC_TYPES else "album"
+            tag.append(self.render_node(doc, item, item_meta, {}, {}, tagname=itemtype))
+        yield doc.prettify()

@@ -170,3 +170,14 @@ class PysonicDatabase(object):
             else:
                 query = "DELETE FROM stars WHERE userid=? and nodeid=?;"
             cursor.execute(query, (user_id, node_id))
+
+    def get_starred_items(self, for_user_id=None):
+        with closing(self.db.cursor()) as cursor:
+            q = """SELECT n.* FROM nodes as n INNER JOIN stars as s ON s.nodeid = n.id"""
+            qargs = []
+            if for_user_id:
+                q += """ AND userid=?"""
+                qargs += [int(for_user_id)]
+            print(q)
+            print(qargs)
+            return cursor.execute(q, qargs).fetchall()
