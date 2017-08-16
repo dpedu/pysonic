@@ -94,6 +94,9 @@ class PysonicLibrary(object):
                 "largeImageUrl": "",
                 "similarArtists": []}
 
+    def set_starred(self, username, node_id, starred):
+        self.db.set_starred(self.db.get_user(username)["id"], node_id, starred)
+
     def get_user(self, user):
         if type(user) is int:
             return self.db.get_user(username)

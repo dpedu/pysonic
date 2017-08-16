@@ -310,3 +310,13 @@ class PysonicApi(object):
         tag.append(folder)
         yield doc.prettify()
 
+    @cherrypy.expose
+    def star_view(self, id, **kwargs):
+        self.library.set_starred(cherrypy.request.login, int(id), starred=True)
+        print(cherrypy.request.login)
+        yield self.response()[0].prettify()
+
+    @cherrypy.expose
+    def unstar_view(self, id, **kwargs):
+        self.library.set_starred(cherrypy.request.login, int(id), starred=False)
+        yield self.response()[0].prettify()

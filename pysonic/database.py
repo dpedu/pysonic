@@ -73,6 +73,15 @@ class PysonicDatabase(object):
                                         'email' TEXT)"""
                     cursor.execute(users_table)
                     version = 1
+                if version < 2:
+                    logging.warning("migrating database to v2 from %s", version)
+                    users_table = """CREATE TABLE 'stars' (
+                                        'userid' INTEGER,
+                                        'nodeid' INTEGER,
+                                        primary key ('userid', 'nodeid'))"""
+                    cursor.execute(users_table)
+                    version = 2
+
                 cursor.execute("""UPDATE meta SET value=? WHERE key="db_version";""", (str(version), ))
                 logging.warning("db schema is version {}".format(version))
 
@@ -154,3 +163,10 @@ class PysonicDatabase(object):
             except IndexError:
                 raise NotFoundError("User doesn't exist")
 
+    def set_starred(self, user_id, node_id, starred=True):
+        with closing(self.db.cursor()) as cursor:
+            if starred:
+                query = "INSERT INTO stars (userid, nodeid) VALUES (?, ?);"
+            else:
+                query = "DELETE FROM stars WHERE userid=? and nodeid=?;"
+            cursor.execute(query, (user_id, node_id))
