@@ -17,6 +17,10 @@ def dict_factory(cursor, row):
     return d
 
 
+class NotFoundError(Exception):
+    pass
+
+
 class PysonicDatabase(object):
     def __init__(self, path):
         self.sqlite_opts = dict(check_same_thread=False, cached_statements=0, isolation_level=None)
@@ -141,3 +145,12 @@ class PysonicDatabase(object):
         with closing(self.db.cursor()) as cursor:
             cursor.execute("REPLACE INTO users (username, password, admin) VALUES (?, ?, ?)",
                            (username, self.hashit(password), is_admin)).fetchall()
+
+    def get_user(self, user):
+        with closing(self.db.cursor()) as cursor:
+            try:
+                column = "id" if type(user) is int else "username"
+                return cursor.execute("SELECT * FROM users WHERE {}=?;".format(column), (user, )).fetchall()[0]
+            except IndexError:
+                raise NotFoundError("User doesn't exist")
+

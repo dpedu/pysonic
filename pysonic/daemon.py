@@ -45,6 +45,7 @@ def main():
     logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
     logging.warning("Albums: {}".format(len(library.get_albums())))
 
+    api = PysonicApi(db, library, args)
     api_config = {}
     if args.disable_auth:
         logging.warning("starting up with auth disabled")
@@ -52,7 +53,7 @@ def main():
         api_config.update({'tools.auth_basic.on': True,
                            'tools.auth_basic.realm': 'pysonic',
                            'tools.auth_basic.checkpassword': db.validate_password})
-    cherrypy.tree.mount(PysonicApi(db, library, args), '/rest/', {'/': api_config})
+    cherrypy.tree.mount(api, '/rest/', {'/': api_config})
 
     cherrypy.config.update({
         'sessionFilter.on': True,

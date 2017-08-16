@@ -285,25 +285,28 @@ class PysonicApi(object):
     def getUser_view(self, u, username, **kwargs):
         cherrypy.response.headers['Content-Type'] = 'text/xml; charset=utf-8'
         doc, root = self.response()
-        user = doc.new_tag("user",
-                           username="admin",
-                           email="admin@localhost",
-                           scrobblingEnabled="false",
-                           adminRole="false",
-                           settingsRole="false",
-                           downloadRole="true",
-                           uploadRole="false",
-                           playlistRole="true",
-                           coverArtRole="false",
-                           commentRole="false",
-                           podcastRole="false",
-                           streamRole="true",
-                           jukeboxRole="false",
-                           shareRole="true",
-                           videoConversionRole="false",
-                           avatarLastChanged="2017-08-07T20:16:24.596Z")
-        root.append(user)
+
+        user = {} if self.options.disable_auth else self.library.db.get_user(cherrypy.request.login)
+        tag = doc.new_tag("user",
+                          username=user["username"],
+                          email=user["email"],
+                          scrobblingEnabled="false",
+                          adminRole="true" if user["admin"] else "false",
+                          settingsRole="false",
+                          downloadRole="true",
+                          uploadRole="false",
+                          playlistRole="true",
+                          coverArtRole="false",
+                          commentRole="false",
+                          podcastRole="false",
+                          streamRole="true",
+                          jukeboxRole="false",
+                          shareRole="true",
+                          videoConversionRole="false",
+                          avatarLastChanged="2017-08-07T20:16:24.596Z")
+        root.append(tag)
         folder = doc.new_tag("folder")
         folder.append("0")
-        user.append(folder)
+        tag.append(folder)
         yield doc.prettify()
+

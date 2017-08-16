@@ -93,3 +93,7 @@ class PysonicLibrary(object):
                 "mediumImageUrl": "",
                 "largeImageUrl": "",
                 "similarArtists": []}
+
+    def get_user(self, user):
+        if type(user) is int:
+            return self.db.get_user(username)
