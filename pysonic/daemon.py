@@ -14,6 +14,9 @@ def main():
 
     parser.add_argument('-p', '--port', default=8080, type=int, help="tcp port to listen on")
     parser.add_argument('-d', '--dirs', required=True, nargs='+', help="new music dirs to share")
+    parser.add_argument('-u', '--user', nargs='+', type=lambda x: x.split(":"), default=[],
+                        help="user:password pairs for auth")
+    parser.add_argument('--disable-auth', action="store_true", help="disable authentication")
     parser.add_argument('-s', '--database-path', default="./db.sqlite", help="path to persistent sqlite database")
     parser.add_argument('--debug', action="store_true", help="enable development options")
 
@@ -35,11 +38,22 @@ def main():
             pass
     library.update()
 
+    for username, password in args.user:
+        db.add_user(username, password)
+
     logging.warning("Libraries: {}".format([i["name"] for i in library.get_libraries()]))
     logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
     logging.warning("Albums: {}".format(len(library.get_albums())))
 
-    cherrypy.tree.mount(PysonicApi(db, library, args), '/rest/', {'/': {}})
+    api_config = {}
+    if args.disable_auth:
+        logging.warning("starting up with auth disabled")
+    else:
+        api_config.update({'tools.auth_basic.on': True,
+                           'tools.auth_basic.realm': 'pysonic',
+                           'tools.auth_basic.checkpassword': db.validate_password})
+    cherrypy.tree.mount(PysonicApi(db, library, args), '/rest/', {'/': api_config})
+
     cherrypy.config.update({
         'sessionFilter.on': True,
         'tools.sessions.on': True,

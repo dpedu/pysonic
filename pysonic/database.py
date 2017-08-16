@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import logging
+from hashlib import sha512
 from itertools import chain
 from contextlib import closing
 
@@ -58,6 +59,17 @@ class PysonicDatabase(object):
             else:
                 # Migrate if old db exists
                 version = int(cursor.execute("SELECT * FROM meta WHERE key='db_version';").fetchone()['value'])
+                if version < 1:
+                    logging.warning("migrating database to v1 from %s", version)
+                    users_table = """CREATE TABLE 'users' (
+                                        'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                        'username' TEXT UNIQUE NOT NULL,
+                                        'password' TEXT NOT NULL,
+                                        'admin' BOOLEAN DEFAULT 0,
+                                        'email' TEXT)"""
+                    cursor.execute(users_table)
+                    version = 1
+                cursor.execute("""UPDATE meta SET value=? WHERE key="db_version";""", (str(version), ))
                 logging.warning("db schema is version {}".format(version))
 
     # Virtual file tree
@@ -115,3 +127,17 @@ class PysonicDatabase(object):
         if metadata:
             return json.loads(metadata)
         return {}
+
+    def hashit(self, unicode_string):
+        return sha512(unicode_string.encode('UTF-8')).hexdigest()
+
+    def validate_password(self, realm, username, password):
+        with closing(self.db.cursor()) as cursor:
+            users = cursor.execute("SELECT * FROM users WHERE username=? AND password=?;",
+                                   (username, self.hashit(password))).fetchall()
+            return bool(users)
+
+    def add_user(self, username, password, is_admin=False):
+        with closing(self.db.cursor()) as cursor:
+            cursor.execute("REPLACE INTO users (username, password, admin) VALUES (?, ?, ?)",
+                           (username, self.hashit(password), is_admin)).fetchall()
