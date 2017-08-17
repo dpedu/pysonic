@@ -4,6 +4,8 @@ import cherrypy
 import subprocess
 from time import time
 from random import shuffle
+from threading import Thread
+from time import sleep
 from bs4 import BeautifulSoup
 from pysonic.library import LETTER_GROUPS
 from pysonic.types import MUSIC_TYPES
@@ -220,20 +222,40 @@ class PysonicApi(object):
                             break
                         yield data
         else:
-            def content():
-                transcode_args = ["ffmpeg", "-i", fpath, "-map", "0:0", "-b:a",
-                                  "{}k".format(min(maxBitRate, self.options.max_bitrate)),
-                                  "-v", "0", "-f", "mp3", "-"]
-                logging.info(' '.join(transcode_args))
+            transcode_args = ["ffmpeg", "-i", fpath, "-map", "0:0", "-b:a",
+                              "{}k".format(min(maxBitRate, self.options.max_bitrate)),
+                              "-v", "0", "-f", "mp3", "-"]
+            logging.info(' '.join(transcode_args))
+            proc = subprocess.Popen(transcode_args, stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            def content(proc):
                 start = time()
-                proc = subprocess.Popen(transcode_args, stdout=subprocess.PIPE)
-                while True:
-                    data = proc.stdout.read(16 * 1024)
-                    if not data:
-                        break
-                    yield data
-                logging.warning("transcoded {} in {}s".format(id, int(time() - start)))
-        return content()
+                try:
+                    while True:
+                        data = proc.stdout.read(16 * 1024)
+                        if not data:
+                            break
+                        yield data
+                finally:
+                    proc.poll()
+                    if proc.returncode is None:
+                        logging.warning("transcoded {} in {}s".format(id, int(time() - start)))
+                    else:
+                        logging.error("transcode of {} exited with code {} after {}s".format(id, proc.returncode,
+                                                                                             int(time() - start)))
+
+            def stopit(proc):
+                try:
+                    proc.wait(timeout=90)
+                except subprocess.TimeoutExpired:
+                    logging.warning("killing timed-out transcoder")
+                    proc.kill()
+                    proc.wait()
+
+            Thread(target=stopit, args=(proc, )).start()
+
+        return content(proc)
     stream_view._cp_config = {'response.stream': True}
 
     @cherrypy.expose
@@ -356,5 +378,5 @@ class PysonicApi(object):
                 continue
             item_meta = item['metadata']
             itemtype = "song" if item["type"] in MUSIC_TYPES else "album"
-            tag.append(self.render_node(doc, item, item_meta, {}, {}, tagname=itemtype))
+            tag.append(self.render_node(doc, item, item_meta, {}, self.db.getnode(item["parent"])["metadata"], tagname=itemtype))
         yield doc.prettify()

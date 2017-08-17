@@ -75,11 +75,11 @@ class PysonicDatabase(object):
                     version = 1
                 if version < 2:
                     logging.warning("migrating database to v2 from %s", version)
-                    users_table = """CREATE TABLE 'stars' (
+                    stars_table = """CREATE TABLE 'stars' (
                                         'userid' INTEGER,
                                         'nodeid' INTEGER,
                                         primary key ('userid', 'nodeid'))"""
-                    cursor.execute(users_table)
+                    cursor.execute(stars_table)
                     version = 2
 
                 cursor.execute("""UPDATE meta SET value=? WHERE key="db_version";""", (str(version), ))
