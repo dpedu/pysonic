@@ -114,6 +114,7 @@ class ApiResponse(object):
     def render_xml(self):
         text_attrs = ['largeImageUrl', 'musicBrainzId', 'smallImageUrl', 'mediumImageUrl', 'lastFmUrl', 'biography',
                       'folder']
+        selftext_attrs = ['value']
         # These attributes will be placed in <hello>{{ value }}</hello> tags instead of hello="{{ value }}" on parent
         doc = BeautifulSoup('', features='lxml-xml')
         root = doc.new_tag("subsonic-response", xmlns="http://subsonic.org/restapi",
@@ -143,6 +144,8 @@ class ApiResponse(object):
                         tag = doc.new_tag(key)
                         parent.append(tag)
                         tag.append(str(value))
+                    elif key in selftext_attrs:
+                        parent.append(str(value))
                     else:
                         parent.attrs[key] = value
         _render_xml(self.data, root)
@@ -268,11 +271,11 @@ class PysonicApi(object):
             if not item["isdir"] and item["type"] not in MUSIC_TYPES:
                 continue
             item_meta = item['metadata']
-            response.add_child("child", _parent="directory", **self.render_node2(item, item_meta, directory, dir_meta))
+            response.add_child("child", _parent="directory", **self.render_node(item, item_meta, directory, dir_meta))
 
         return response
 
-    def render_node2(self, item, item_meta, directory, dir_meta):
+    def render_node(self, item, item_meta, directory, dir_meta):
         """
         Given a node and it's parent directory, and meta, return a dict with the keys formatted how the subsonic clients
         expect them to be
@@ -410,50 +413,6 @@ class PysonicApi(object):
 
     getCoverArt_view._cp_config = {'response.stream': True}
 
-    def response(self, status="ok"):
-        doc = BeautifulSoup('', features='lxml-xml')
-        root = doc.new_tag("subsonic-response", xmlns="http://subsonic.org/restapi", status=status, version="1.15.0")
-        doc.append(root)
-        return doc, root
-
-    def render_node(self, doc, item, item_meta, directory, dir_meta, tagname="child"):
-        child = doc.new_tag(tagname,
-                            id=item["id"],
-                            parent=item["id"],
-                            isDir="true" if item['isdir'] else "false",
-                            title=item_meta.get("id3_title", item["name"]),
-                            album=item_meta.get("id3_album", item["album"]),
-                            artist=item_meta.get("id3_artist", item["artist"]),
-                            # playCount="5",
-                            # created="2016-04-25T07:31:33.000Z"
-                            # genre="Other",
-                            # path="Cosmic Gate/Sign Of The Times/03 Flatline (featuring Kyler England).mp3"
-                            type="music")
-        if 'kbitrate' in item_meta:
-            child.attrs["bitrate"] = item_meta["kbitrate"]
-        if item["size"] != -1:
-            child.attrs["size"] = item["size"]
-        if "media_length" in item_meta:
-            child.attrs["duration"] = item_meta["media_length"]
-        if "albumId" in directory:
-            child.attrs["albumId"] = directory["id"]
-        if "artistId" in directory:
-            child.attrs["artistId"] = directory["parent"]
-        if "." in item["name"]:
-            child.attrs["suffix"] = item["name"].split(".")[-1]
-        if item["type"]:
-            child.attrs["contentType"] = item["type"]
-        if 'cover' in item_meta:
-            child.attrs["coverArt"] = item_meta["cover"]
-        elif 'cover' in dir_meta:
-            child.attrs["coverArt"] = dir_meta["cover"]
-        if 'track' in item_meta:
-            child.attrs["track"] = item_meta['track']
-        if 'id3_year' in item_meta:
-            child.attrs["year"] = item_meta['id3_year']
-        return child
-
-
     @cherrypy.expose
     @formatresponse
     def getArtistInfo_view(self, id, includeNotPresent="true", **kwargs):
@@ -475,7 +434,7 @@ class PysonicApi(object):
 
     @cherrypy.expose
     @formatresponse
-    def getUser_view(self, u, username, **kwargs):
+    def getUser_view(self, username, **kwargs):
         user = {} if self.options.disable_auth else self.library.db.get_user(cherrypy.request.login)
         response = ApiResponse()
         response.add_child("user",
@@ -522,12 +481,17 @@ class PysonicApi(object):
                 continue
             item_meta = item['metadata']
             itemtype = "song" if item["type"] in MUSIC_TYPES else "album"
-            response.add_child(itemtype, _parent="starred", **self.render_node2(item, item_meta, {}, {}))
+            response.add_child(itemtype, _parent="starred", **self.render_node(item, item_meta, {}, {}))
         return response
 
     @cherrypy.expose
     @formatresponse
     def getRandomSongs_view(self, size=50, genre=None, fromYear=0, toYear=0, **kwargs):
+        """
+        Get a playlist of random songs
+        :param genre: genre name to find songs under
+        :type genre: str
+        """
         response = ApiResponse()
         response.add_child("randomSongs")
         children = self.library.get_songs(size, shuffle=True)
@@ -538,5 +502,26 @@ class PysonicApi(object):
             item_meta = item['metadata']
             itemtype = "song" if item["type"] in MUSIC_TYPES else "album"
             response.add_child(itemtype, _parent="randomSongs",
-                               **self.render_node2(item, item_meta, {}, self.db.getnode(item["parent"])["metadata"]))
+                               **self.render_node(item, item_meta, {}, self.db.getnode(item["parent"])["metadata"]))
         return response
+
+    @cherrypy.expose
+    @formatresponse
+    def getGenres_view(self, **kwargs):
+        response = ApiResponse()
+        response.add_child("genres")
+        response.add_child("genre", _parent="genres", value="Death Metal", songCount=420, albumCount=69)
+        response.add_child("genre", _parent="genres", value="Metal", songCount=52, albumCount=3)
+        response.add_child("genre", _parent="genres", value="Punk", songCount=34, albumCount=3)
+        return response
+
+    @cherrypy.expose
+    @formatresponse
+    def scrobble_view(self, id, submission, **kwargs):
+        """
+        :param id: song id being played
+        :param submission: True if end of song reached. False on start of track.
+        """
+        submission = True if submission == "true" else False
+        # TODO save played track stats
+        return ApiResponse()
