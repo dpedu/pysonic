@@ -200,17 +200,6 @@ class PysonicApi(object):
 
     @cherrypy.expose
     def savePlayQueue_view(self, id, current, position, **kwargs):
-        # /rest/savePlayQueue.view?
-        # u=dave&
-        # s=h7vcg97gm2vbb7m4133pavs1ot&
-        # t=355f45124d9d3a75fe681c11d94ed066&
-        # v=1.2.0&
-        # c=DSub&
-        # id=296&
-        # id=289&
-        # id=292&id=287&id=288&id=290&id=293&id=294&id=297&id=298&id=291&
-        # current=297&
-        # position=0
         print("TODO save playlist with items {} current {} position {}".format(id, current, position))
 
     @cherrypy.expose
@@ -389,8 +378,6 @@ class PysonicApi(object):
 
     @cherrypy.expose
     def getCoverArt_view(self, id, **kwargs):
-        # /rest/getCoverArt.view?u=dave&s=bfk9mir8is02u3m5as8ucsehn0
-        # &t=e2b09fb9233d1bfac9abe3dc73017f1e&v=1.2.0&c=DSub&id=12833
         fpath = self.library.get_filepath(id)
         type2ct = {
             'jpg': 'image/jpeg',
@@ -416,20 +403,10 @@ class PysonicApi(object):
     @cherrypy.expose
     @formatresponse
     def getArtistInfo_view(self, id, includeNotPresent="true", **kwargs):
-        # /rest/getArtistInfo.view?
-        # u=dave
-        # s=gqua9i6c414aomjok8f6b0kdp1
-        # t=ed1d31850bbd27690687305d9ccbdabf
-        # v=1.2.0
-        # c=DSub
-        # id=7
-        # includeNotPresent=true
         info = self.library.get_artist_info(id)
-
         response = ApiResponse()
         response.add_child("artistInfo")
         response.set_attrs("artistInfo", **info)
-
         return response
 
     @cherrypy.expose
@@ -565,3 +542,9 @@ class PysonicApi(object):
                     break
 
         return response
+
+    @cherrypy.expose
+    @formatresponse
+    def setRating_view(self, id, rating):
+        # rating is 1-5
+        pass
