@@ -525,3 +525,43 @@ class PysonicApi(object):
         submission = True if submission == "true" else False
         # TODO save played track stats
         return ApiResponse()
+
+    @cherrypy.expose
+    @formatresponse
+    def search2_view(self, query, artistCount, albumCount, songCount, **kwargs):
+        response = ApiResponse()
+        response.add_child("searchResult2")
+
+        artistCount = int(artistCount)
+        albumCount = int(albumCount)
+        songCount = int(songCount)
+
+        query = query.replace("*", "")  # TODO handle this
+
+        artists = 0
+        for item in self.library.get_artists():
+            if query in item["name"].lower():
+                response.add_child("artist", _parent="searchResult2", id=item["id"], name=item["name"])
+                artists += 1
+                if artists >= artistCount:
+                    break
+
+        # TODO make this more efficient
+        albums = 0
+        for item in self.library.get_artists():
+            if query in item["name"].lower():
+                response.add_child("album", _parent="searchResult2", **self.render_node(item, item["metadata"], {}, {}))
+                albums += 1
+                if albums >= albumCount:
+                    break
+
+        # TODO make this more efficient
+        songs = 0
+        for item in self.library.get_songs(limit=9999999, shuffle=False):
+            if query in item["name"].lower():
+                response.add_child("song", _parent="searchResult2", **self.render_node(item, item["metadata"], {}, {}))
+                songs += 1
+                if songs > songCount:
+                    break
+
+        return response
