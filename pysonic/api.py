@@ -1,17 +1,76 @@
-import sys
+import json
 import logging
-import cherrypy
 import subprocess
 from time import time
 from random import shuffle
 from threading import Thread
-from time import sleep
+import cherrypy
+from collections import defaultdict
 from bs4 import BeautifulSoup
 from pysonic.library import LETTER_GROUPS
 from pysonic.types import MUSIC_TYPES
 
 
 logging = logging.getLogger("api")
+
+
+class ApiResponse(object):
+    def __init__(self, status="ok", version="1.15.0", top=None, **kwargs):
+        self.status = status
+        self.version = version
+        self.data = {}
+        self.top = top
+        if self.top:
+            self.data[self.top] = kwargs ## kwargs unused TODO
+
+    def add_child(self, _type, **kwargs):
+        if not self.top:
+            raise Exception("You can't do this?")
+        if _type not in self.data[self.top]:
+            self.data[self.top][_type] = []
+        self.data[self.top][_type].append(kwargs)
+
+    def render_json(self):
+        return json.dumps({"subsonic-response": dict(status=self.status, version="1.15.0", **self.data)}, indent=4)
+
+    def render_xml(self):
+        doc = BeautifulSoup('', features='lxml-xml')
+        root = doc.new_tag("subsonic-response", xmlns="http://subsonic.org/restapi",
+                           status=self.status,
+                           version=self.version)
+        doc.append(root)
+
+        if self.top:
+            top = doc.new_tag(self.top)
+            root.append(top)
+            # TODO top_attrs ?
+            for top_child_type, top_child_instances in self.data[self.top].items():
+                for top_child_attrs in top_child_instances:
+                    child = doc.new_tag(top_child_type)
+                    child.attrs.update(top_child_attrs)
+                    top.append(child)
+
+        albumlist = doc.new_tag("albumList")
+        doc.append(albumlist)
+        return doc.prettify()
+
+
+response_formats = defaultdict(lambda: "render_xml")
+response_formats["json"] = "render_json"
+
+response_headers = defaultdict(lambda: "text/xml; charset=utf-8")
+response_headers["json"] = "text/json" #TODO is this right?
+
+
+def formatresponse(func):
+    """
+    Decorator for rendering ApiResponse responses
+    """
+    def wrapper(*args, **kwargs):
+        response = func(*args, **kwargs)
+        cherrypy.response.headers['Content-Type'] = response_headers[kwargs.get("f", "xml")]
+        return getattr(response, response_formats[kwargs.get("f", "xml")])()
+    return wrapper
 
 
 class PysonicApi(object):
@@ -104,6 +163,7 @@ class PysonicApi(object):
         print("TODO save playlist with items {} current {} position {}".format(id, current, position))
 
     @cherrypy.expose
+    @formatresponse
     def getAlbumList_view(self, type, size=50, offset=0, **kwargs):
         albums = self.library.get_albums()
         if type == "random":
@@ -114,31 +174,27 @@ class PysonicApi(object):
             raise NotImplemented()
         albumset = albums[0 + int(offset):int(size) + int(offset)]
 
-        cherrypy.response.headers['Content-Type'] = 'text/xml; charset=utf-8'
-        doc, root = self.response()
-        albumlist = doc.new_tag("albumList")
-        doc.append(albumlist)
+        response = ApiResponse(top="albumList")
 
         for album in albumset:
             album_meta = album['metadata']
-            tag = doc.new_tag("album",
-                              id=album["id"],
-                              parent=album["parent"],
-                              isDir="true" if album['isdir'] else "false",
-                              title=album_meta.get("id3_title", album["name"]),  #TODO these cant be blank or dsub gets mad
-                              album=album_meta.get("id3_album", album["album"]),
-                              artist=album_meta.get("id3_artist", album["artist"]),
-                              # X year="2014"
-                              # X coverArt="3228"
-                              # playCount="0"
-                              # created="2016-05-08T05:31:31.000Z"/>
-                              )
+            album_kw = dict(id=album["id"],
+                            parent=album["parent"],
+                            isDir="true" if album['isdir'] else "false",
+                            title=album_meta.get("id3_title", album["name"]),  #TODO these cant be blank or dsub gets mad
+                            album=album_meta.get("id3_album", album["album"]),
+                            artist=album_meta.get("id3_artist", album["artist"]),
+                            # X year="2014"
+                            # X coverArt="3228"
+                            # playCount="0"
+                            # created="2016-05-08T05:31:31.000Z"/>)
+                            )
             if 'cover' in album_meta:
-                tag.attrs["coverArt"] = album_meta["cover"]
+                album_kw["coverArt"] = album_meta["cover"]
             if 'id3_year' in album_meta:
-                tag.attrs["year"] = album_meta['id3_year']
-            albumlist.append(tag)
-        yield doc.prettify()
+                album_kw["year"] = album_meta['id3_year']
+            response.add_child("album", **album_kw)
+        return response
 
     @cherrypy.expose
     def getMusicDirectory_view(self, id, **kwargs):
