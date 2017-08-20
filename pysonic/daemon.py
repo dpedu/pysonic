@@ -1,6 +1,7 @@
 import os
 import logging
 import cherrypy
+from sqlite3 import IntegrityError
 from pysonic.api import PysonicApi
 from pysonic.library import PysonicLibrary, DuplicateRootException
 from pysonic.database import PysonicDatabase
@@ -43,7 +44,10 @@ def main():
     library.update()
 
     for username, password in args.user:
-        db.add_user(username, password)
+        try:
+            db.add_user(username, password)
+        except IntegrityError:
+            db.update_user(username, password)
 
     logging.warning("Libraries: {}".format([i["name"] for i in library.get_libraries()]))
     logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))

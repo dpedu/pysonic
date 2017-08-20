@@ -209,8 +209,13 @@ class PysonicDatabase(object):
 
     def add_user(self, username, password, is_admin=False):
         with closing(self.db.cursor()) as cursor:
-            cursor.execute("REPLACE INTO users (username, password, admin) VALUES (?, ?, ?)",
-                           (username, self.hashit(password), is_admin)).fetchall()
+            cursor.execute("INSERT INTO users (username, password, admin) VALUES (?, ?, ?)",
+                           (username, self.hashit(password), is_admin))
+
+    def update_user(self, username, password, is_admin=False):
+        with closing(self.db.cursor()) as cursor:
+            cursor.execute("UPDATE users SET password=?, admin=? WHERE username=?;",
+                           (self.hashit(password), is_admin, username))
 
     def get_user(self, user):
         with closing(self.db.cursor()) as cursor:
