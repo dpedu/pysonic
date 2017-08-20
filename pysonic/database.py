@@ -3,11 +3,11 @@ import json
 import sqlite3
 import logging
 from hashlib import sha512
-from itertools import chain
 from contextlib import closing
 
 
 logging = logging.getLogger("database")
+keys_in_table = ["title", "album", "artist", "type", "size"]
 
 
 def dict_factory(cursor, row):
@@ -39,18 +39,29 @@ class PysonicDatabase(object):
         queries = ["""CREATE TABLE 'meta' (
                         'key' TEXT PRIMARY KEY NOT NULL,
                         'value' TEXT);""",
-                   """INSERT INTO meta VALUES ('db_version', '0');""",
+                   """INSERT INTO meta VALUES ('db_version', '3');""",
                    """CREATE TABLE 'nodes' (
                         'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         'parent' INTEGER NOT NULL,
                         'isdir' BOOLEAN NOT NULL,
+                        'size' INTEGER NOT NULL DEFAULT -1,
                         'name' TEXT NOT NULL,
                         'type' TEXT,
                         'title' TEXT,
                         'album' TEXT,
                         'artist' TEXT,
                         'metadata' TEXT
-                        )"""]
+                        )""",
+                   """CREATE TABLE 'users' (
+                        'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        'username' TEXT UNIQUE NOT NULL,
+                        'password' TEXT NOT NULL,
+                        'admin' BOOLEAN DEFAULT 0,
+                        'email' TEXT)""",
+                   """CREATE TABLE 'stars' (
+                        'userid' INTEGER,
+                        'nodeid' INTEGER,
+                        primary key ('userid', 'nodeid'))"""]
 
         with closing(self.db.cursor()) as cursor:
             cursor.execute("SELECT * FROM sqlite_master WHERE type='table' AND name='meta';")
@@ -81,6 +92,11 @@ class PysonicDatabase(object):
                                         primary key ('userid', 'nodeid'))"""
                     cursor.execute(stars_table)
                     version = 2
+                if version < 3:
+                    logging.warning("migrating database to v3 from %s", version)
+                    size_col = """ALTER TABLE nodes ADD 'size' INTEGER NOT NULL DEFAULT -1;"""
+                    cursor.execute(size_col)
+                    version = 3
 
                 cursor.execute("""UPDATE meta SET value=? WHERE key="db_version";""", (str(version), ))
                 logging.warning("db schema is version {}".format(version))
@@ -125,7 +141,7 @@ class PysonicDatabase(object):
         if types:
             add_filter("type", types)
 
-        query = query.rstrip(" AND")
+        query = query.rstrip(" AND").rstrip("WHERE ")
 
         if order:
             query += "ORDER BY "
@@ -138,15 +154,15 @@ class PysonicDatabase(object):
         with closing(self.db.cursor()) as cursor:
             return list(map(self._populate_meta, cursor.execute(query, qargs).fetchall()))
 
-    def addnode(self, parent_id, fspath, name):
+    def addnode(self, parent_id, fspath, name, size=-1):
         fullpath = os.path.join(fspath, name)
         is_dir = os.path.isdir(fullpath)
-        return self._addnode(parent_id, name, is_dir)
+        return self._addnode(parent_id, name, is_dir, size=size)
 
-    def _addnode(self, parent_id, name, is_dir=True):
+    def _addnode(self, parent_id, name, is_dir=True, size=-1):
         with closing(self.db.cursor()) as cursor:
-            cursor.execute("INSERT INTO nodes (parent, isdir, name) VALUES (?, ?, ?);",
-                           (parent_id, 1 if is_dir else 0, name))
+            cursor.execute("INSERT INTO nodes (parent, isdir, name, size) VALUES (?, ?, ?, ?);",
+                           (parent_id, 1 if is_dir else 0, name, size))
             return self.getnode(cursor.lastrowid)
 
     def delnode(self, node_id):
@@ -159,7 +175,6 @@ class PysonicDatabase(object):
 
     def update_metadata(self, node_id, mergedict=None, **kwargs):
         mergedict = mergedict if mergedict else {}
-        keys_in_table = ["title", "album", "artist", "type"]
         mergedict.update(kwargs)
         with closing(self.db.cursor()) as cursor:
             for table_key in keys_in_table:
@@ -173,7 +188,6 @@ class PysonicDatabase(object):
                 cursor.execute("UPDATE nodes SET metadata=? WHERE id=?;", (json.dumps(metadata), node_id, ))
 
     def get_metadata(self, node_id):
-        keys_in_table = ["title", "album", "artist", "type"]
         node = self.getnode(node_id)
         meta = node["metadata"]
         meta.update({item: node[item] for item in keys_in_table})

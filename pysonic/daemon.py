@@ -22,7 +22,11 @@ def main():
 
     group = parser.add_argument_group("app options")
     group.add_argument("--skip-transcode", action="store_true", help="instead of trancoding mp3s, send as-is")
+    group.add_argument("--no-rescan", action="store_true", help="don't perform simple scan on startup")
+    group.add_argument("--deep-rescap", action="store_true", help="perform deep scan (read id3 etc)")
+    group.add_argument("--enable-prune", action="store_true", help="enable removal of media not found on disk")
     group.add_argument("--max-bitrate", type=int, default=320, help="maximum send bitrate")
+    group.add_argument("--enable-cors", action="store_true", help="add response headers to allow cors")
 
     args = parser.parse_args()
 
@@ -53,6 +57,12 @@ def main():
         api_config.update({'tools.auth_basic.on': True,
                            'tools.auth_basic.realm': 'pysonic',
                            'tools.auth_basic.checkpassword': db.validate_password})
+    if args.enable_cors:
+        def cors():
+            cherrypy.response.headers["Access-Control-Allow-Origin"] = "*"
+        cherrypy.tools.cors = cherrypy.Tool('before_handler', cors)
+        api_config.update({'tools.cors.on': True})
+
     cherrypy.tree.mount(api, '/rest/', {'/': api_config})
 
     cherrypy.config.update({

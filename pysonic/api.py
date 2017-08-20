@@ -188,6 +188,10 @@ class PysonicApi(object):
                             # bitRate="320"
                             # path="Cosmic Gate/Sign Of The Times/03 Flatline (featuring Kyler England).mp3"
                             type="music")
+        if item["size"] != -1:
+            child.attrs["size"] = item["size"]
+        if "media_length" in item_meta:
+            child.attrs["duration"] = item_meta["media_length"]
         if "albumId" in directory:
             child.attrs["albumId"] = directory["id"]
         if "artistId" in directory:
@@ -212,8 +216,13 @@ class PysonicApi(object):
         assert maxBitRate >= 32 and maxBitRate <= 320
         fpath = self.library.get_filepath(id)
         meta = self.library.get_file_metadata(id)
+        to_bitrate = min(maxBitRate, self.options.max_bitrate, meta.get("media_kbitrate", 320))
         cherrypy.response.headers['Content-Type'] = 'audio/mpeg'
-        if self.options.skip_transcode and meta["type"] == "audio/mpeg":
+        if "media_length" in meta:
+            cherrypy.response.headers['X-Content-Duration'] = str(int(meta['media_length']))
+        cherrypy.response.headers['X-Content-Kbitrate'] = str(to_bitrate)
+        if (self.options.skip_transcode or meta.get("media_kbitrate", -1) == to_bitrate) \
+           and meta["type"] == "audio/mpeg":
             def content():
                 with open(fpath, "rb") as f:
                     while True:
@@ -221,26 +230,37 @@ class PysonicApi(object):
                         if not data:
                             break
                         yield data
+            return content()
         else:
+            transcode_meta = "transcoded_{}_size".format(to_bitrate)
+            if transcode_meta in meta:
+                cherrypy.response.headers['Content-Length'] = str(int(meta[transcode_meta]))
+
             transcode_args = ["ffmpeg", "-i", fpath, "-map", "0:0", "-b:a",
-                              "{}k".format(min(maxBitRate, self.options.max_bitrate)),
+                              "{}k".format(to_bitrate),
                               "-v", "0", "-f", "mp3", "-"]
             logging.info(' '.join(transcode_args))
             proc = subprocess.Popen(transcode_args, stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
             def content(proc):
+                length = 0
+                completed = False
                 start = time()
                 try:
                     while True:
                         data = proc.stdout.read(16 * 1024)
                         if not data:
+                            completed = True
                             break
                         yield data
+                        length += len(data)
                 finally:
                     proc.poll()
-                    if proc.returncode is None:
+                    if proc.returncode is None or proc.returncode == 0:
                         logging.warning("transcoded {} in {}s".format(id, int(time() - start)))
+                        if completed:
+                            self.library.report_transcode(id, to_bitrate, length)
                     else:
                         logging.error("transcode of {} exited with code {} after {}s".format(id, proc.returncode,
                                                                                              int(time() - start)))
@@ -255,7 +275,7 @@ class PysonicApi(object):
 
             Thread(target=stopit, args=(proc, )).start()
 
-        return content(proc)
+            return content(proc)
     stream_view._cp_config = {'response.stream': True}
 
     @cherrypy.expose

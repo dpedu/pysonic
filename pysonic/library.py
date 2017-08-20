@@ -108,3 +108,14 @@ class PysonicLibrary(object):
 
     def get_songs(self, limit=50, shuffle=True):
         return self.db.getnodes(types=MUSIC_TYPES, limit=limit, order="rand")
+
+    def get_song(self, id=None):
+        if id:
+            return self.db.getnode(id)
+        else:
+            return self.db.getnodes(types=MUSIC_TYPES, limit=1, order="rand")
+
+    def report_transcode(self, item_id, bitrate, num_bytes):
+        assert type(bitrate) is int and bitrate > 0 and bitrate <= 320
+        logging.info("Got transcode report of {} for item {} @ {}".format(num_bytes, item_id, bitrate))
+        self.db.update_metadata(item_id, {"transcoded_{}_size".format(bitrate):int(num_bytes)})

@@ -4,10 +4,12 @@ import logging
 import mimetypes
 from time import time
 from threading import Thread
-from pysonic.types import KNOWN_MIMES, MUSIC_TYPES
+from pysonic.types import KNOWN_MIMES, MUSIC_TYPES, MPX_TYPES, FLAC_TYPES, WAV_TYPES
 from mutagen.id3 import ID3
 from mutagen import MutagenError
 from mutagen.id3._util import ID3NoHeaderError
+from mutagen.flac import FLAC
+from mutagen.mp3 import MP3
 
 
 logging = logging.getLogger("scanner")
@@ -31,7 +33,7 @@ class PysonicFilesystemScanner(object):
             logging.info("Scanning {}".format(meta["fspath"]))
 
             def recurse_dir(path, parent):
-                logging.info("Scanning {} with parent {}".format(path, parent))
+                logging.info("Scanning {}".format(path))
                 # create or update the database of nodes by comparing sets of names
                 fs_entries = set(os.listdir(path))
                 db_entires = self.library.db.getnodes(parent["id"])
@@ -39,9 +41,17 @@ class PysonicFilesystemScanner(object):
                 to_delete = db_entires_names - fs_entries
                 to_create = fs_entries - db_entires_names
 
+                # If any size have changed, mark the file to be rescanned
+                for entry in db_entires:
+                    finfo = os.stat(os.path.join(path, entry["name"]))
+                    if finfo.st_size != entry["size"]:
+                        logging.info("{} has changed in size, marking for meta rescan".format(entry["id"]))
+                        self.library.db.update_metadata(entry['id'], id3_done=False, size=finfo.st_size)
+
                 # Create any nodes not found in the db
                 for create in to_create:
-                    new_node = self.library.db.addnode(parent["id"], path, create)
+                    new_finfo = os.stat(os.path.join(path, create))
+                    new_node = self.library.db.addnode(parent["id"], path, create, size=new_finfo.st_size)
                     logging.info("Added {}".format(os.path.join(path, create)))
                     db_entires.append(new_node)
 
@@ -56,9 +66,9 @@ class PysonicFilesystemScanner(object):
                 for entry in db_entires:
                     if entry["name"] in to_delete:
                         continue
-
                     if int(entry['isdir']):  # 1 means dir
                         recurse_dir(os.path.join(path, entry["name"]), entry)
+
             # Populate all files for this top-level root
             recurse_dir(meta["fspath"], parent)
             #
@@ -100,7 +110,7 @@ class PysonicFilesystemScanner(object):
             #
             #
             #
-            # Add advanced id3 metadata
+            # Add advanced id3 / media info metadata
             for artist_dir in self.library.db.getnodes(parent["id"]):
                 artist = artist_dir["name"]
                 for album_dir in self.library.db.getnodes(artist_dir["id"]):
@@ -110,37 +120,56 @@ class PysonicFilesystemScanner(object):
                         track_meta = track_file['metadata']
                         title = track_file["name"]
                         fpath = self.library.get_filepath(track_file["id"])
-                        if track_meta.get('id3_done', False) or track_file.get("type", "x") not in MUSIC_TYPES:
+                        if track_meta.get('id3_done', False) or track_file.get("type", None) not in MUSIC_TYPES:
                             continue
-                        print("Mutagening", fpath)
                         tags = {'id3_done': True}
                         try:
-                            id3 = ID3(fpath)
-                            # print(id3.pprint())
+                            audio = None
+                            if track_file.get("type", None) in MPX_TYPES:
+                                audio = MP3(fpath)
+                                if audio.info.sketchy:
+                                    logging.warning("media reported as sketchy: %s", fpath)
+                            elif track_file.get("type", None) in FLAC_TYPES:
+                                audio = FLAC(fpath)
+                            else:
+                                audio = ID3(fpath)
+                            # print(audio.pprint())
                             try:
-                                tags["track"] = int(RE_NUMBERS.findall(''.join(id3['TRCK'].text))[0])
+                                tags["media_length"] = int(audio.info.length)
+                            except (ValueError, AttributeError):
+                                pass
+                            try:
+                                bitrate = int(audio.info.bitrate)
+                                tags["media_bitrate"] = bitrate
+                                tags["media_kbitrate"] = int(bitrate / 1024)
+                            except (ValueError, AttributeError):
+                                pass
+                            try:
+                                tags["track"] = int(RE_NUMBERS.findall(''.join(audio['TRCK'].text))[0])
                             except (KeyError, IndexError):
                                 pass
                             try:
-                                tags["id3_artist"] = ''.join(id3['TPE1'].text)
+                                tags["id3_artist"] = ''.join(audio['TPE1'].text)
                             except KeyError:
                                 pass
                             try:
-                                tags["id3_album"] = ''.join(id3['TALB'].text)
+                                tags["id3_album"] = ''.join(audio['TALB'].text)
                             except KeyError:
                                 pass
                             try:
-                                tags["id3_title"] = ''.join(id3['TIT2'].text)
+                                tags["id3_title"] = ''.join(audio['TIT2'].text)
                             except KeyError:
                                 pass
                             try:
-                                tags["id3_year"] = id3['TDRC'].text[0].year
+                                tags["id3_year"] = audio['TDRC'].text[0].year
                             except (KeyError, IndexError):
                                 pass
+                            logging.info("got all media info from %s", fpath)
                         except ID3NoHeaderError:
                             pass
                         except MutagenError as m:
-                            logging.error(m)
+                            logging.error("failed to read audio information: %s", m)
+                            continue
                         self.library.db.update_metadata(track_file["id"], **tags)
 
-            logging.warning("Library scan complete in {}s".format(int(time() - start)))
+            logging.warning("Library scan complete in {}s".format(round(time() - start, 2)))
