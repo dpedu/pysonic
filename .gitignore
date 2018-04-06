@@ -1,0 +1,7 @@
+/build
+/dist
+/pysonic.egg-info
+/testenv
+/test.db
+/library
+__pycache__
