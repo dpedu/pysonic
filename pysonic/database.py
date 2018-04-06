@@ -1,10 +1,9 @@
-import os
-import json
 import sqlite3
 import logging
 from hashlib import sha512
+from time import time
 from contextlib import closing
-
+from collections import Iterable
 
 logging = logging.getLogger("database")
 keys_in_table = ["title", "album", "artist", "type", "size"]
@@ -21,12 +20,33 @@ class NotFoundError(Exception):
     pass
 
 
+class DuplicateRootException(Exception):
+    pass
+
+
+def hash_password(unicode_string):
+        return sha512(unicode_string.encode('UTF-8')).hexdigest()
+
+
+def readcursor(func):
+    """
+    Provides a cursor to the wrapped method as the first arg.
+    """
+    def wrapped(*args, **kwargs):
+        self = args[0]
+        if len(args) >= 2 and isinstance(args[1], sqlite3.Cursor):
+            return func(*args, **kwargs)
+        else:
+            with closing(self.db.cursor()) as cursor:
+                return func(*[self, cursor], *args[1:], **kwargs)
+    return wrapped
+
+
 class PysonicDatabase(object):
     def __init__(self, path):
-        self.sqlite_opts = dict(check_same_thread=False, cached_statements=0, isolation_level=None)
+        self.sqlite_opts = dict(check_same_thread=False)
         self.path = path
         self.db = None
-
         self.open()
         self.migrate()
 
@@ -36,212 +56,423 @@ class PysonicDatabase(object):
 
     def migrate(self):
         # Create db
-        queries = ["""CREATE TABLE 'meta' (
+        queries = ["""CREATE TABLE 'libraries' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
+                        'name'      TEXT,
+                        'path'      TEXT UNIQUE);""",
+                   """CREATE TABLE 'dirs' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
+                        'library'   INTEGER,
+                        'parent'    INTEGER,
+                        'name'      TEXT,
+                        UNIQUE(parent, name)
+                        )""",
+                   """CREATE TABLE 'genres' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
+                        'name'      TEXT UNIQUE)""",
+                   """CREATE TABLE 'artists' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
+                        'libraryid' INTEGER,
+                        'dir'       INTEGER UNIQUE,
+                        'name'      TEXT)""",
+                   """CREATE TABLE 'albums' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
+                        'artistid'  INTEGER,
+                        'coverid'   INTEGER,
+                        'dir'       INTEGER,
+                        'name'      TEXT,
+                        'added'     INTEGER NOT NULL DEFAULT -1,
+                         UNIQUE (artistid, dir));""",
+                   """CREATE TABLE 'songs' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
+                        'library'   INTEGER,
+                        'albumid'   BOOLEAN,
+                        'genre'     INTEGER DEFAULT NULL,
+                        'file'      TEXT UNIQUE,  -- path from the library root
+                        'size'      INTEGER NOT NULL DEFAULT -1,
+                        'title'     TEXT NOT NULL,
+                        'lastscan'  INTEGER NOT NULL DEFAULT -1,
+                        'format'    TEXT,
+                        'length'    INTEGER,
+                        'bitrate'   INTEGER,
+                        'track'     INTEGER,
+                        'year'      INTEGER
+                        )""",
+                   """CREATE TABLE 'covers' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
+                        'library'   INTEGER,
+                        'type'      TEXT,
+                        'size'      TEXT,
+                        'path'      TEXT UNIQUE);""",
+                   """CREATE TABLE 'users' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        'username'  TEXT UNIQUE NOT NULL,
+                        'password'  TEXT NOT NULL,
+                        'admin'     BOOLEAN DEFAULT 0,
+                        'email'     TEXT)""",
+                   """CREATE TABLE 'stars' (
+                        'userid'    INTEGER,
+                        'songid'    INTEGER,
+                        primary key ('userid', 'songid'))""",
+                   """CREATE TABLE 'playlists' (
+                        'id'        INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        'ownerid'   INTEGER,
+                        'name'      TEXT,
+                        'public'    BOOLEAN,
+                        'created'   INTEGER,
+                        'changed'   INTEGER,
+                        'cover'     INTEGER,
+                        UNIQUE ('ownerid', 'name'))""",
+                   """CREATE TABLE 'playlist_entries' (
+                        'playlistid'    INTEGER,
+                        'songid'        INTEGER,
+                        'order'         FLOAT)""",
+                   """CREATE TABLE 'meta' (
                         'key' TEXT PRIMARY KEY NOT NULL,
                         'value' TEXT);""",
-                   """INSERT INTO meta VALUES ('db_version', '3');""",
-                   """CREATE TABLE 'nodes' (
-                        'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        'parent' INTEGER NOT NULL,
-                        'isdir' BOOLEAN NOT NULL,
-                        'size' INTEGER NOT NULL DEFAULT -1,
-                        'name' TEXT NOT NULL,
-                        'type' TEXT,
-                        'title' TEXT,
-                        'album' TEXT,
-                        'artist' TEXT,
-                        'metadata' TEXT
-                        )""",
-                   """CREATE TABLE 'users' (
-                        'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        'username' TEXT UNIQUE NOT NULL,
-                        'password' TEXT NOT NULL,
-                        'admin' BOOLEAN DEFAULT 0,
-                        'email' TEXT)""",
-                   """CREATE TABLE 'stars' (
-                        'userid' INTEGER,
-                        'nodeid' INTEGER,
-                        primary key ('userid', 'nodeid'))"""]
+                   """INSERT INTO meta VALUES ('db_version', '1');"""]
 
         with closing(self.db.cursor()) as cursor:
-            cursor.execute("SELECT * FROM sqlite_master WHERE type='table' AND name='meta';")
+            cursor.execute("SELECT * FROM sqlite_master WHERE type='table' AND name='meta'")
 
             # Initialize DB
             if len(cursor.fetchall()) == 0:
                 logging.warning("Initializing database")
                 for query in queries:
                     cursor.execute(query)
+                cursor.execute("COMMIT")
             else:
                 # Migrate if old db exists
-                version = int(cursor.execute("SELECT * FROM meta WHERE key='db_version';").fetchone()['value'])
-                if version < 1:
-                    logging.warning("migrating database to v1 from %s", version)
-                    users_table = """CREATE TABLE 'users' (
-                                        'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                                        'username' TEXT UNIQUE NOT NULL,
-                                        'password' TEXT NOT NULL,
-                                        'admin' BOOLEAN DEFAULT 0,
-                                        'email' TEXT)"""
-                    cursor.execute(users_table)
-                    version = 1
-                if version < 2:
-                    logging.warning("migrating database to v2 from %s", version)
-                    stars_table = """CREATE TABLE 'stars' (
-                                        'userid' INTEGER,
-                                        'nodeid' INTEGER,
-                                        primary key ('userid', 'nodeid'))"""
-                    cursor.execute(stars_table)
-                    version = 2
-                if version < 3:
-                    logging.warning("migrating database to v3 from %s", version)
-                    size_col = """ALTER TABLE nodes ADD 'size' INTEGER NOT NULL DEFAULT -1;"""
-                    cursor.execute(size_col)
-                    version = 3
-
-                cursor.execute("""UPDATE meta SET value=? WHERE key="db_version";""", (str(version), ))
-                logging.warning("db schema is version {}".format(version))
-
-    # Virtual file tree
-    def getnode(self, node_id):
-        return self.getnodes(node_id=node_id)[0]
-
-    def _populate_meta(self, node):
-        node['metadata'] = self.decode_metadata(node['metadata'])
-        return node
-
-    def getnodes(self, *parent_ids, node_id=None, types=None, limit=None, order=None):
-        """
-        Find nodes that match the passed paramters.
-        :param parent_ids: one or more parents to find children of
-        :type parent_ids: int
-        :param node_id: single node id to return
-        :type node_id: int
-        :param types: filter by type column
-        :type types: list
-        :param limit: number of records to limit to
-        :param order: one of ("rand") to select ordering mode
-        """
-        query = "SELECT * FROM nodes WHERE "
-        qargs = []
-
-        def add_filter(name, values):
-            nonlocal query
-            nonlocal qargs
-            query += "{} in (".format(name)
-            for value in (values if type(values) in [list, tuple] else [values]):
-                query += "?, "
-                qargs += [value]
-            query = query.rstrip(", ")
-            query += ") AND"
-
-        if node_id:
-            add_filter("id", node_id)
-        if parent_ids:
-            add_filter("parent", parent_ids)
-        if types:
-            add_filter("type", types)
-
-        query = query.rstrip(" AND").rstrip("WHERE ")
-
-        if order:
-            query += "ORDER BY "
-            if order == "rand":
-                query += "RANDOM()"
-
-        if limit:  # TODO 2-item tuple limit
-            query += " limit {}".format(limit)
-
-        with closing(self.db.cursor()) as cursor:
-            return list(map(self._populate_meta, cursor.execute(query, qargs).fetchall()))
-
-    def addnode(self, parent_id, fspath, name, size=-1):
-        fullpath = os.path.join(fspath, name)
-        is_dir = os.path.isdir(fullpath)
-        return self._addnode(parent_id, name, is_dir, size=size)
-
-    def _addnode(self, parent_id, name, is_dir=True, size=-1):
-        with closing(self.db.cursor()) as cursor:
-            cursor.execute("INSERT INTO nodes (parent, isdir, name, size) VALUES (?, ?, ?, ?);",
-                           (parent_id, 1 if is_dir else 0, name, size))
-            return self.getnode(cursor.lastrowid)
-
-    def delnode(self, node_id):
-        deleted = 1
-        for child in self.getnodes(node_id):
-            deleted += self.delnode(child["id"])
-        with closing(self.db.cursor()) as cursor:
-            cursor.execute("DELETE FROM nodes WHERE id=?;", (node_id, ))
-        return deleted
-
-    def update_metadata(self, node_id, mergedict=None, **kwargs):
-        mergedict = mergedict if mergedict else {}
-        mergedict.update(kwargs)
-        with closing(self.db.cursor()) as cursor:
-            for table_key in keys_in_table:
-                if table_key in mergedict:
-                    cursor.execute("UPDATE nodes SET {}=? WHERE id=?;".format(table_key),
-                                   (mergedict[table_key], node_id))
-            other_meta = {k: v for k, v in mergedict.items() if k not in keys_in_table}
-            if other_meta:
-                metadata = self.get_metadata(node_id)
-                metadata.update(other_meta)
-                cursor.execute("UPDATE nodes SET metadata=? WHERE id=?;", (json.dumps(metadata), node_id, ))
-
-    def get_metadata(self, node_id):
-        node = self.getnode(node_id)
-        meta = node["metadata"]
-        meta.update({item: node[item] for item in keys_in_table})
-        return meta
-
-    def decode_metadata(self, metadata):
-        if metadata:
-            return json.loads(metadata)
-        return {}
-
-    def hashit(self, unicode_string):
-        return sha512(unicode_string.encode('UTF-8')).hexdigest()
-
-    def validate_password(self, realm, username, password):
-        with closing(self.db.cursor()) as cursor:
-            users = cursor.execute("SELECT * FROM users WHERE username=? AND password=?;",
-                                   (username, self.hashit(password))).fetchall()
-            return bool(users)
-
-    def add_user(self, username, password, is_admin=False):
-        with closing(self.db.cursor()) as cursor:
-            cursor.execute("INSERT INTO users (username, password, admin) VALUES (?, ?, ?)",
-                           (username, self.hashit(password), is_admin))
-
-    def update_user(self, username, password, is_admin=False):
-        with closing(self.db.cursor()) as cursor:
-            cursor.execute("UPDATE users SET password=?, admin=? WHERE username=?;",
-                           (self.hashit(password), is_admin, username))
-
-    def get_user(self, user):
-        with closing(self.db.cursor()) as cursor:
-            try:
-                column = "id" if type(user) is int else "username"
-                return cursor.execute("SELECT * FROM users WHERE {}=?;".format(column), (user, )).fetchall()[0]
-            except IndexError:
-                raise NotFoundError("User doesn't exist")
-
-    def set_starred(self, user_id, node_id, starred=True):
-        with closing(self.db.cursor()) as cursor:
-            if starred:
-                query = "INSERT INTO stars (userid, nodeid) VALUES (?, ?);"
-            else:
-                query = "DELETE FROM stars WHERE userid=? and nodeid=?;"
-            try:
-                cursor.execute(query, (user_id, node_id))
-            except sqlite3.IntegrityError:
+                # cursor.execute("""UPDATE meta SET value=? WHERE key="db_version";""", (str(version), ))
+                # logging.warning("db schema is version {}".format(version))
                 pass
 
-    def get_starred_items(self, for_user_id=None):
-        with closing(self.db.cursor()) as cursor:
-            q = """SELECT n.* FROM nodes as n INNER JOIN stars as s ON s.nodeid = n.id"""
-            qargs = []
-            if for_user_id:
-                q += """ AND userid=?"""
-                qargs += [int(for_user_id)]
-            return list(map(self._populate_meta,
-                            cursor.execute(q, qargs).fetchall()))
+    # Music related
+    @readcursor
+    def add_root(self, cursor, path, name="Library"):
+        """
+        Add a new library root. Returns the root ID or raises on collision
+        :param path: normalized absolute path to add to the library
+        :type path: str:
+        :return: int
+        :raises: sqlite3.IntegrityError
+        """
+        assert path.startswith("/")
+        try:
+            cursor.execute("INSERT INTO libraries ('name', 'path') VALUES (?, ?)", (name, path, ))
+            cursor.execute("COMMIT")
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            raise DuplicateRootException("Root '{}' already exists".format(path))
+
+    @readcursor
+    def get_libraries(self, cursor, id=None):
+        libs = []
+        q = "SELECT * FROM libraries"
+        params = []
+        conditions = []
+        if id:
+            conditions.append("id = ?")
+            params.append(id)
+        if conditions:
+            q += " WHERE " + " AND ".join(conditions)
+        cursor.execute(q, params)
+        for row in cursor:
+            libs.append(row)
+        return libs
+
+    @readcursor
+    def get_artists(self, cursor, id=None, dirid=None, sortby=None, order=None):
+        assert order in ["asc", "desc", None]
+        artists = []
+        q = "SELECT * FROM artists"
+        params = []
+        conditions = []
+        if id:
+            conditions.append("id = ?")
+            params.append(id)
+        if dirid:
+            conditions.append("dir = ?")
+            params.append(dirid)
+        if conditions:
+            q += " WHERE " + " AND ".join(conditions)
+        if sortby:
+            q += " ORDER BY {} {}".format(sortby, order.upper() if order else "ASC")
+        cursor.execute(q, params)
+        for row in cursor:
+            artists.append(row)
+        return artists
+
+    @readcursor
+    def get_albums(self, cursor, id=None, artist=None, sortby=None, order=None, limit=None):
+        """
+        :param limit: int or tuple of int, int. translates directly to sql logic.
+        """
+        if order:
+            order = {"asc": "ASC", "desc": "DESC"}[order]
+
+        if sortby and sortby == "random":
+            sortby = "RANDOM()"
+
+        albums = []
+
+        q = """
+            SELECT
+                alb.*,
+                art.name as artistname,
+                dirs.parent as artistdir
+            FROM albums as alb
+                INNER JOIN artists as art
+                    on alb.artistid = art.id
+                INNER JOIN dirs
+                    on dirs.id = alb.dir
+            """
+        params = []
+
+        conditions = []
+        if id:
+            conditions.append("id = ?")
+            params.append(id)
+        if artist:
+            conditions.append("artistid = ?")
+            params.append(artist)
+        if conditions:
+            q += " WHERE " + " AND ".join(conditions)
+
+        if sortby:
+            q += " ORDER BY {}".format(sortby)
+            if order:
+                q += " {}".format(order)
+
+        if limit:
+            q += " LIMIT {}".format(limit) if isinstance(limit, int) \
+                else " LIMIT {}, {}".format(*limit)
+
+        cursor.execute(q, params)
+        for row in cursor:
+            albums.append(row)
+        return albums
+
+    @readcursor
+    def get_songs(self, cursor, id=None, genre=None, sortby=None, order=None, limit=None):
+        # TODO make this query massively uglier by joining albums and artists so that artistid etc can be a filter
+        # or maybe lookup those IDs in the library layer?
+        if order:
+            order = {"asc": "ASC", "desc": "DESC"}[order]
+
+        if sortby and sortby == "random":
+            sortby = "RANDOM()"
+
+        songs = []
+
+        q = """
+            SELECT
+                s.*,
+                alb.name as albumname,
+                alb.coverid as albumcoverid,
+                art.name as artistname,
+                g.name as genrename
+            FROM songs as s
+                INNER JOIN albums as alb
+                    on s.albumid == alb.id
+                INNER JOIN artists as art
+                    on alb.artistid = art.id
+                LEFT JOIN genres as g
+                    on s.genre == g.id
+            """
+
+        params = []
+
+        conditions = []
+        if id and isinstance(id, int):
+            conditions.append("s.id = ?")
+            params.append(id)
+        elif id and isinstance(id, Iterable):
+            conditions.append("s.id IN ({})".format(",".join("?" * len(id))))
+            params += id
+        if genre:
+            conditions.append("g.name = ?")
+            params.append(genre)
+        if conditions:
+            q += " WHERE " + " AND ".join(conditions)
+
+        if sortby:
+            q += " ORDER BY {}".format(sortby)
+            if order:
+                q += " {}".format(order)
+
+        if limit:
+            q += " LIMIT {}".format(limit)  # TODO support limit pagination
+
+        cursor.execute(q, params)
+        for row in cursor:
+            songs.append(row)
+        return songs
+
+    @readcursor
+    def get_genres(self, cursor, genre_id=None):
+        genres = []
+        q = "SELECT * FROM genres"
+        params = []
+        conditions = []
+        if genre_id:
+            conditions.append("id = ?")
+            params.append(genre_id)
+        if conditions:
+            q += " WHERE " + " AND ".join(conditions)
+        cursor.execute(q, params)
+        for row in cursor:
+            genres.append(row)
+        return genres
+
+    @readcursor
+    def get_cover(self, cursor, coverid):
+        cover = None
+        for cover in cursor.execute("SELECT * FROM covers WHERE id = ?", (coverid, )):
+            return cover
+
+    @readcursor
+    def get_subsonic_musicdir(self, cursor, dirid):
+        """
+        The world is a harsh place.
+        Again, this bullshit exists only to serve subsonic clients. Given a directory ID it returns a dict containing:
+        - the directory itself
+        - its parent
+        - its child dirs
+        - its child media
+
+        that's a lie, it's a tuple and it's full of BS. read the code
+        """
+        # find directory
+        dirinfo = None
+        for dirinfo in cursor.execute("SELECT * FROM dirs WHERE id = ?", (dirid, )):
+            pass
+        assert dirinfo
+
+        ret = None
+
+        # see if it matches the artists or albums table
+        artist = None
+        for artist in cursor.execute("SELECT * FROM artists WHERE dir = ?", (dirid, )):
+            pass
+
+        # if artist:
+        #   get child albums
+        if artist:
+            ret = ("artist", dirinfo, artist)
+            children = []
+            for album in cursor.execute("SELECT * FROM albums WHERE artistid = ?", (artist["id"], )):
+                children.append(("album", album))
+            ret[2]['children'] = children
+            return ret
+
+        # else if album:
+        #   get child tracks
+        album = None
+        for album in cursor.execute("SELECT * FROM albums WHERE dir = ?", (dirid, )):
+            pass
+        if album:
+            ret = ("album", dirinfo, album)
+
+            artist_info = cursor.execute("SELECT * FROM artists WHERE id = ?", (album["artistid"], )).fetchall()[0]
+
+            children = []
+            for song in cursor.execute("SELECT * FROM songs WHERE albumid = ?", (album["id"], )):
+                song["_artist"] = artist_info
+                children.append(("song", song))
+            ret[2]['children'] = children
+            return ret
+
+    # Playlist related
+    @readcursor
+    def add_playlist(self, cursor, ownerid, name, song_ids, public=False):
+        """
+        Create a playlist
+        """
+        now = time()
+        cursor.execute("INSERT INTO playlists (ownerid, name, public, created, changed) VALUES (?, ?, ?, ?, ?)",
+                       (ownerid, name, public, now, now))
+        plid = cursor.lastrowid
+        for song_id in song_ids:
+            self.add_to_playlist(cursor, plid, song_id)
+        cursor.execute("COMMIT")
+
+    @readcursor
+    def add_to_playlist(self, cursor, playlist_id, song_id):
+        # TODO deal with order column
+        cursor.execute("INSERT INTO playlist_entries (playlistid, songid) VALUES (?, ?)", (playlist_id, song_id))
+
+    @readcursor
+    def get_playlist(self, cursor, playlist_id):
+        return cursor.execute("SELECT * FROM playlists WHERE id=?", (playlist_id, )).fetchone()
+
+    @readcursor
+    def get_playlist_songs(self, cursor, playlist_id):
+        songs = []
+        q = """
+            SELECT
+                s.*,
+                alb.name as albumname,
+                alb.coverid as albumcoverid,
+                art.name as artistname,
+                art.name as artistid,
+                g.name as genrename
+            FROM playlist_entries as pe
+                INNER JOIN songs as s
+                    on pe.songid == s.id
+                INNER JOIN albums as alb
+                    on s.albumid == alb.id
+                INNER JOIN artists as art
+                    on alb.artistid = art.id
+                LEFT JOIN genres as g
+                    on s.genre == g.id
+            WHERE pe.playlistid = ?
+            ORDER BY pe.'order' ASC;
+        """
+        for row in cursor.execute(q, (playlist_id, )):
+            songs.append(row)
+        return songs
+
+    @readcursor
+    def get_playlists(self, cursor, user_id):
+        playlists = []
+        for row in cursor.execute("SELECT * FROM playlists WHERE ownerid=? or public=1", (user_id, )):
+            playlists.append(row)
+        return playlists
+
+    @readcursor
+    def remove_index_from_playlist(self, cursor, playlist_id, index):
+        cursor.execute("DELETE FROM playlist_entries WHERE playlistid=? LIMIT ?, 1", (playlist_id, index, ))
+        cursor.execute("COMMIT")
+
+    @readcursor
+    def empty_playlist(self, cursor, playlist_id):
+        #TODO combine with # TODO combine with
+        cursor.execute("DELETE FROM playlist_entries WHERE playlistid=?", (playlist_id, ))
+        cursor.execute("COMMIT")
+
+    @readcursor
+    def delete_playlist(self, cursor, playlist_id):
+        cursor.execute("DELETE FROM playlists WHERE id=?", (playlist_id, ))
+        cursor.execute("COMMIT")
+
+    # User related
+    @readcursor
+    def add_user(self, cursor, username, password, is_admin=False):
+        cursor.execute("INSERT INTO users (username, password, admin) VALUES (?, ?, ?)",
+                       (username, hash_password(password), is_admin))
+        cursor.execute("COMMIT")
+
+    @readcursor
+    def update_user(self, cursor, username, password, is_admin=False):
+        cursor.execute("UPDATE users SET password=?, admin=? WHERE username=?;",
+                       (hash_password(password), is_admin, username))
+        cursor.execute("COMMIT")
+
+    @readcursor
+    def get_user(self, cursor, user):
+        try:
+            column = "id" if type(user) is int else "username"
+            return cursor.execute("SELECT * FROM users WHERE {}=?;".format(column), (user, )).fetchall()[0]
+        except IndexError:
+            raise NotFoundError("User doesn't exist")

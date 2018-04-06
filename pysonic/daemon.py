@@ -1,10 +1,10 @@
 import os
 import logging
 import cherrypy
-from sqlite3 import IntegrityError
+from sqlite3 import DatabaseError
 from pysonic.api import PysonicApi
-from pysonic.library import PysonicLibrary, DuplicateRootException
-from pysonic.database import PysonicDatabase
+from pysonic.library import PysonicLibrary
+from pysonic.database import PysonicDatabase, DuplicateRootException
 
 
 def main():
@@ -31,14 +31,15 @@ def main():
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO if args.debug else logging.WARNING)
+    logging.basicConfig(level=logging.INFO if args.debug else logging.WARNING,
+                        format="%(asctime)-15s %(levelname)-8s %(filename)s:%(lineno)d %(message)s")
 
     db = PysonicDatabase(path=args.database_path)
     library = PysonicLibrary(db)
     for dirname in args.dirs:
         assert os.path.exists(dirname) and dirname.startswith("/"), "--dirs must be absolute paths and exist!"
         try:
-            library.add_dir(dirname)
+            library.add_root_dir(dirname)
         except DuplicateRootException:
             pass
     library.update()
@@ -46,21 +47,25 @@ def main():
     for username, password in args.user:
         try:
             db.add_user(username, password)
-        except IntegrityError:
+        except DatabaseError:
             db.update_user(username, password)
 
-    logging.warning("Libraries: {}".format([i["name"] for i in library.get_libraries()]))
-    logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
-    logging.warning("Albums: {}".format(len(library.get_albums())))
+    # logging.warning("Libraries: {}".format([i["name"] for i in library.get_libraries()]))
+    # logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
+    # logging.warning("Albums: {}".format(len(library.get_albums())))
 
     api = PysonicApi(db, library, args)
     api_config = {}
     if args.disable_auth:
         logging.warning("starting up with auth disabled")
     else:
+        def validate_password(realm, username, password):
+            print("I JUST VALIDATED {}:{} ({})".format(username, password, realm))
+            return True
+
         api_config.update({'tools.auth_basic.on': True,
                            'tools.auth_basic.realm': 'pysonic',
-                           'tools.auth_basic.checkpassword': db.validate_password})
+                           'tools.auth_basic.checkpassword': validate_password})
     if args.enable_cors:
         def cors():
             cherrypy.response.headers["Access-Control-Allow-Origin"] = "*"
@@ -98,6 +103,7 @@ def main():
     finally:
         logging.info("API has shut down")
         cherrypy.engine.exit()
+
 
 if __name__ == '__main__':
     main()
