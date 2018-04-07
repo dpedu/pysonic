@@ -147,6 +147,13 @@ class PysonicDatabase(object):
                 # logging.warning("db schema is version {}".format(version))
                 pass
 
+    @readcursor
+    def get_stats(self, cursor):
+        songs = cursor.execute("SELECT COUNT(*) as cnt FROM songs").fetchone()['cnt']
+        artists = cursor.execute("SELECT COUNT(*) as cnt FROM artists").fetchone()['cnt']
+        albums = cursor.execute("SELECT COUNT(*) as cnt FROM albums").fetchone()['cnt']
+        return dict(songs=songs, artists=artists, albums=albums)
+
     # Music related
     @readcursor
     def add_root(self, cursor, path, name="Library"):

@@ -10,11 +10,15 @@ import cherrypy
 logging = logging.getLogger("api")
 
 
-class PysonicApi(object):
+class PysonicSubsonicApi(object):
     def __init__(self, db, library, options):
         self.db = db
         self.library = library
         self.options = options
+
+    @cherrypy.expose
+    def index(self):
+        return str(self.library.db.get_stats())
 
     @cherrypy.expose
     @formatresponse
@@ -61,7 +65,7 @@ class PysonicApi(object):
 
     @cherrypy.expose
     @formatresponse
-    def getAlbumList_view(self, type, size=50, offset=0, **kwargs):
+    def getAlbumList_view(self, type, size=250, offset=0, **kwargs):
         qargs = {}
         if type == "random":
             qargs.update(sortby="random")

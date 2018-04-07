@@ -2,7 +2,7 @@ import os
 import logging
 import cherrypy
 from sqlite3 import DatabaseError
-from pysonic.api import PysonicApi
+from pysonic.api import PysonicSubsonicApi
 from pysonic.library import PysonicLibrary
 from pysonic.database import PysonicDatabase, DuplicateRootException
 
@@ -54,7 +54,7 @@ def main():
     # logging.warning("Artists: {}".format([i["name"] for i in library.get_artists()]))
     # logging.warning("Albums: {}".format(len(library.get_albums())))
 
-    api = PysonicApi(db, library, args)
+    api = PysonicSubsonicApi(db, library, args)
     api_config = {}
     if args.disable_auth:
         logging.warning("starting up with auth disabled")
