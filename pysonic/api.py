@@ -17,8 +17,11 @@ class PysonicSubsonicApi(object):
         self.options = options
 
     @cherrypy.expose
+    @formatresponse
     def index(self):
-        return str(self.library.db.get_stats())
+        response = ApiResponse()
+        response.add_child("totals", **self.library.db.get_stats())
+        return response
 
     @cherrypy.expose
     @formatresponse
@@ -73,8 +76,10 @@ class PysonicSubsonicApi(object):
             qargs.update(sortby="name", order="asc")
         elif type == "newest":
             qargs.update(sortby="added", order="desc")
-        else:
-            raise NotImplemented()
+        elif type == "recent":
+            qargs.update(sortby="played", order="desc")
+        elif type == "frequent":
+            qargs.update(sortby="plays", order="desc")
 
         qargs.update(limit=(offset, size))
 
@@ -415,6 +420,10 @@ class PysonicSubsonicApi(object):
     @cherrypy.expose
     def savePlayQueue_view(self, id, current, position, **kwargs):
         print("TODO save playqueue with items {} current {} position {}".format(id, current, position))
+
+        song = self.library.get_song(int(current))
+        self.library.db.update_album_played(song['albumid'], time())
+        self.library.db.increment_album_plays(song['albumid'])
         # TODO save playlist with items ['378', '386', '384', '380', '383'] current 383 position 4471
         # id entries are strings!
 

@@ -82,6 +82,8 @@ class PysonicDatabase(object):
                         'dir'       INTEGER,
                         'name'      TEXT,
                         'added'     INTEGER NOT NULL DEFAULT -1,
+                        'played'    INTEGER,
+                        'plays'     INTEGER NOT NULL DEFAULT 0,
                          UNIQUE (artistid, dir));""",
                    """CREATE TABLE 'songs' (
                         'id'        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -461,6 +463,16 @@ class PysonicDatabase(object):
     @readcursor
     def delete_playlist(self, cursor, playlist_id):
         cursor.execute("DELETE FROM playlists WHERE id=?", (playlist_id, ))
+        cursor.execute("COMMIT")
+
+    @readcursor
+    def update_album_played(self, cursor, album_id, last_played=None):
+        cursor.execute("UPDATE albums SET played=? WHERE id=?", (last_played, album_id, ))
+        cursor.execute("COMMIT")
+
+    @readcursor
+    def increment_album_plays(self, cursor, album_id):
+        cursor.execute("UPDATE albums SET plays = plays + 1 WHERE id=?", (album_id, ))
         cursor.execute("COMMIT")
 
     # User related
